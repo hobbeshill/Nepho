@@ -36,7 +36,7 @@ private val PulseDarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun PulseHubTheme(
+fun NephoTheme(
     content: @Composable () -> Unit
 ) {
     MaterialTheme(

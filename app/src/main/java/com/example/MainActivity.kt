@@ -12,9 +12,9 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import com.example.ai.configureAppCheck
 import com.example.data.SupportedApp
-import com.example.ui.PulseHubApp
+import com.example.ui.NephoApp
 import com.example.ui.PulseViewModel
-import com.example.ui.theme.PulseHubTheme
+import com.example.ui.theme.NephoTheme
 
 class MainActivity : ComponentActivity() {
 
@@ -30,14 +30,14 @@ class MainActivity : ComponentActivity() {
         handleIncomingShareIntent(intent)
 
         setContent {
-            PulseHubTheme {
+            NephoTheme {
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
                 ) {
                     viewModel.refreshNotificationPermission()
                 }
 
-                PulseHubApp(
+                NephoApp(
                     viewModel = viewModel,
                     onRequestNotificationPermission = {
                         if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {

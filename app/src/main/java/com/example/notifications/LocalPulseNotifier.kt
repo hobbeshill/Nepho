@@ -22,7 +22,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 
 object LocalPulseNotifier {
-    const val CHANNEL_ID = "pulsehub_stream"
+    const val CHANNEL_ID = "nepho_stream"
     const val REMOTE_INPUT_KEY = "pulse_inline_reply"
 
     fun hasNotificationPermission(context: Context): Boolean {

@@ -197,7 +197,7 @@ fun LinksVaultTab(
                     },
                     onCopyLink = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        clipboard.setPrimaryClip(ClipData.newPlainText("PulseHub Link", link.url))
+                        clipboard.setPrimaryClip(ClipData.newPlainText("Nepho Link", link.url))
                         onLinkCopied()
                     }
                 )

@@ -63,7 +63,7 @@ object MockNotificationFactory {
                 notificationId = (now % 100000).toInt() + 105,
                 app = SupportedApp.MESSAGES,
                 title = "Jordan (Mobile)",
-                body = "Running 10 mins behind for the 10am sync—can you share the Figma deck link before we start? Here is my draft notes doc: https://docs.google.com/document/d/pulsehub-sync-notes",
+                body = "Running 10 mins behind for the 10am sync—can you share the Figma deck link before we start? Here is my draft notes doc: https://docs.google.com/document/d/nepho-sync-notes",
                 postTime = now - 2_100_000L,
                 canReply = true,
                 secondaryActions = listOf("Mark Read")

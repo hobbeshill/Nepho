@@ -26,7 +26,7 @@ abstract class PulseDatabase : RoomDatabase() {
                 INSTANCE ?: Room.databaseBuilder(
                     context.applicationContext,
                     PulseDatabase::class.java,
-                    "pulsehub_database"
+                    "nepho_database"
                 ).build().also { INSTANCE = it }
             }
         }

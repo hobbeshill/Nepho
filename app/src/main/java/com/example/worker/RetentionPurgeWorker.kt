@@ -25,7 +25,7 @@ class RetentionPurgeWorker(
     }
 
     companion object {
-        private const val UNIQUE_WORK_NAME = "pulsehub_24h_retention_purge"
+        private const val UNIQUE_WORK_NAME = "nepho_24h_retention_purge"
 
         fun schedulePeriodicPurge(context: Context) {
             val request = PeriodicWorkRequestBuilder<RetentionPurgeWorker>(

@@ -81,7 +81,7 @@ import java.util.Locale
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
-fun PulseHubApp(
+fun NephoApp(
     viewModel: PulseViewModel,
     onRequestNotificationPermission: () -> Unit
 ) {

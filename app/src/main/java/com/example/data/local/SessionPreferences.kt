@@ -12,7 +12,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 
 private val Context.pulseSessionDataStore: DataStore<Preferences> by preferencesDataStore(
-    name = "pulsehub_session_prefs"
+    name = "nepho_session_prefs"
 )
 
 class SessionPreferences(private val context: Context) {
