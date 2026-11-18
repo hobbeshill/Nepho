@@ -24,7 +24,7 @@ object MockNotificationFactory {
                 app = SupportedApp.OUTLOOK,
                 title = "Maya Patel • Q4 Budget & Vendor Invoice",
                 body = "Urgent: Finance needs your sign-off on Invoice #INV-4092 before 4:00 PM today. Review the updated sheet at https://contoso.sharepoint.com/sites/finance/inv-4092 and reply with approval.",
-                postTime = now - 120_000L,
+                postTime = now + 4L,
                 canReply = true,
                 secondaryActions = listOf("Archive", "Delete")
             ),
@@ -34,7 +34,7 @@ object MockNotificationFactory {
                 app = SupportedApp.TEAMSNAP,
                 title = "Coach Ramirez • U14 Soccer Practice Update",
                 body = "Field 3 is wet, so tonight's practice moves to Turf B at 5:30 PM. Please confirm availability for Saturday's game schedule at https://go.teamsnap.com/events/u14-saturday-turf",
-                postTime = now - 420_000L,
+                postTime = now + 3L,
                 canReply = true,
                 secondaryActions = listOf("Mark Read", "Mute")
             ),
@@ -44,7 +44,7 @@ object MockNotificationFactory {
                 app = SupportedApp.GMAIL,
                 title = "Stripe Billing • Action Required: Receipt & Renewal",
                 body = "Your workspace invoice #8841 is ready for review. Download PDF receipt and update billing contacts here: https://dashboard.stripe.com/invoices/8841-workspace",
-                postTime = now - 900_000L,
+                postTime = now + 2L,
                 canReply = false,
                 secondaryActions = listOf("Archive", "Delete")
             ),
@@ -54,7 +54,7 @@ object MockNotificationFactory {
                 app = SupportedApp.GROUPME,
                 title = "Weekend Carpool Crew",
                 body = "Alex: Hey team! I posted the Saturday game carpool sheet and snack rotation here https://go.teamsnap.com/events/u14-saturday-turf — reply if you can drive morning leg!",
-                postTime = now - 1_500_000L,
+                postTime = now + 1L,
                 canReply = true,
                 secondaryActions = listOf("Mark Read", "Mute")
             ),
@@ -64,7 +64,7 @@ object MockNotificationFactory {
                 app = SupportedApp.MESSAGES,
                 title = "Jordan (Mobile)",
                 body = "Running 10 mins behind for the 10am sync—can you share the Figma deck link before we start? Here is my draft notes doc: https://docs.google.com/document/d/nepho-sync-notes",
-                postTime = now - 2_100_000L,
+                postTime = now,
                 canReply = true,
                 secondaryActions = listOf("Mark Read")
             )

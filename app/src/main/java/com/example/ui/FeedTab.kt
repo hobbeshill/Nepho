@@ -25,6 +25,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
+import androidx.compose.material.icons.filled.AlarmOn
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
@@ -32,8 +33,12 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.AlarmAdd
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Shield
+import androidx.compose.material.icons.outlined.StarBorder
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -71,6 +76,8 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
+import com.example.ui.theme.AmberSignal
+import com.example.ui.theme.AmberSignalContainer
 import com.example.ui.theme.BorderHairline
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
@@ -90,16 +97,23 @@ fun FeedTab(
     selectedAppFilter: SupportedApp?,
     unreadOnly: Boolean,
     hasLinksOnly: Boolean,
+    starredOnly: Boolean,
     bannerDismissed: Boolean,
     hasNotificationPermission: Boolean,
+    isNotificationAccessGranted: Boolean,
     onSearchQueryChange: (String) -> Unit,
     onSelectAppFilter: (SupportedApp?) -> Unit,
     onToggleUnreadOnly: () -> Unit,
     onToggleHasLinksOnly: () -> Unit,
+    onToggleStarredOnly: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationAccessSettings: () -> Unit,
+    onOpenShadePreferences: () -> Unit,
     onSimulateIncoming: () -> Unit,
     onDismissBanner: () -> Unit,
     onMarkAsRead: (String) -> Unit,
+    onToggleStar: (String) -> Unit,
+    onOpenReminderDialog: (PulseNotificationItem) -> Unit,
     onSendReply: (String, String) -> Unit,
     onDismissItem: (String) -> Unit,
     onSecondaryAction: (String, String) -> Unit,
@@ -115,10 +129,13 @@ fun FeedTab(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
-        if (!bannerDismissed) {
+        if (!isNotificationAccessGranted || !bannerDismissed) {
             item(key = "onboarding_banner") {
                 OnboardingIntakeBanner(
+                    isNotificationAccessGranted = isNotificationAccessGranted,
                     hasNotificationPermission = hasNotificationPermission,
+                    onGrantNotificationAccess = onOpenNotificationAccessSettings,
+                    onOpenShadePreferences = onOpenShadePreferences,
                     onEnableLocalAlerts = onRequestNotificationPermission,
                     onSimulateIncoming = onSimulateIncoming,
                     onDismiss = onDismissBanner
@@ -211,7 +228,9 @@ fun FeedTab(
                 }
 
                 Row(
-                    modifier = Modifier.fillMaxWidth(),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
                     FilterChip(
@@ -241,6 +260,25 @@ fun FeedTab(
                         },
                         modifier = Modifier.testTag("toggle_has_links")
                     )
+
+                    FilterChip(
+                        selected = starredOnly,
+                        onClick = onToggleStarredOnly,
+                        label = { Text(stringResource(R.string.filter_starred_only)) },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = if (starredOnly) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                contentDescription = null,
+                                tint = AmberSignal,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        },
+                        modifier = Modifier.testTag("toggle_starred_only"),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = AmberSignalContainer,
+                            selectedLabelColor = AmberSignal
+                        )
+                    )
                 }
             }
         }
@@ -260,6 +298,8 @@ fun FeedTab(
                     onCardExpand = {
                         if (!item.isRead) onMarkAsRead(item.key)
                     },
+                    onToggleStar = { onToggleStar(item.key) },
+                    onOpenReminderDialog = { onOpenReminderDialog(item) },
                     onSendReply = { replyText -> onSendReply(item.key, replyText) },
                     onDismiss = { onDismissItem(item.key) },
                     onSecondaryAction = { actionLabel -> onSecondaryAction(item.key, actionLabel) },
@@ -272,17 +312,21 @@ fun FeedTab(
 
 @Composable
 private fun OnboardingIntakeBanner(
+    isNotificationAccessGranted: Boolean,
     hasNotificationPermission: Boolean,
+    onGrantNotificationAccess: () -> Unit,
+    onOpenShadePreferences: () -> Unit,
     onEnableLocalAlerts: () -> Unit,
     onSimulateIncoming: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val accent = if (isNotificationAccessGranted) EmeraldOk else CyanPulse
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("onboarding_banner_card"),
         shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.35f)),
+        border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
         colors = CardDefaults.cardColors(containerColor = MidnightSurface)
     ) {
         Box(
@@ -291,7 +335,7 @@ private fun OnboardingIntakeBanner(
                 .background(
                     Brush.linearGradient(
                         colors = listOf(
-                            CyanPulseContainer.copy(alpha = 0.55f),
+                            accent.copy(alpha = 0.16f),
                             MidnightSurface
                         )
                     )
@@ -306,36 +350,47 @@ private fun OnboardingIntakeBanner(
                 ) {
                     Row(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
+                        verticalAlignment = Alignment.CenterVertically,
+                        modifier = Modifier.weight(1f)
                     ) {
                         Icon(
                             imageVector = Icons.Outlined.Shield,
                             contentDescription = null,
-                            tint = CyanPulse,
+                            tint = accent,
                             modifier = Modifier.size(20.dp)
                         )
                         Text(
-                            text = stringResource(R.string.banner_title),
+                            text = if (isNotificationAccessGranted) {
+                                stringResource(R.string.banner_active_title)
+                            } else {
+                                stringResource(R.string.banner_title)
+                            },
                             style = MaterialTheme.typography.titleMedium,
                             color = MaterialTheme.colorScheme.onSurface
                         )
                     }
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("dismiss_banner_button")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.banner_dismiss),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
+                    if (isNotificationAccessGranted) {
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("dismiss_banner_button")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.banner_dismiss),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
                     }
                 }
 
                 Text(
-                    text = stringResource(R.string.banner_body),
+                    text = if (isNotificationAccessGranted) {
+                        stringResource(R.string.banner_active_body)
+                    } else {
+                        stringResource(R.string.banner_body)
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -344,53 +399,88 @@ private fun OnboardingIntakeBanner(
                     modifier = Modifier.fillMaxWidth(),
                     horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
-                    Button(
-                        onClick = onEnableLocalAlerts,
-                        enabled = !hasNotificationPermission,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("enable_local_alerts_button"),
-                        colors = ButtonDefaults.buttonColors(
-                            containerColor = CyanPulse,
-                            disabledContainerColor = EmeraldOk.copy(alpha = 0.18f),
-                            disabledContentColor = EmeraldOk
-                        )
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.NotificationsActive,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(6.dp))
-                        Text(
-                            text = if (hasNotificationPermission) {
-                                stringResource(R.string.banner_alerts_enabled)
-                            } else {
-                                stringResource(R.string.banner_enable_alerts)
-                            },
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    if (!isNotificationAccessGranted) {
+                        Button(
+                            onClick = onGrantNotificationAccess,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("grant_notification_access_button"),
+                            colors = ButtonDefaults.buttonColors(containerColor = CyanPulse)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.banner_grant_access),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
+                        Button(
+                            onClick = onOpenShadePreferences,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("banner_shade_prefs_button"),
+                            colors = ButtonDefaults.buttonColors(containerColor = EmeraldOk)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Tune,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(6.dp))
+                            Text(
+                                text = stringResource(R.string.banner_shade_prefs),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
 
-                    OutlinedButton(
-                        onClick = onSimulateIncoming,
-                        modifier = Modifier
-                            .weight(1f)
-                            .testTag("banner_simulate_button"),
-                        border = BorderStroke(1.dp, BorderHairline)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.PlayArrow,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp)
-                        )
-                        Spacer(Modifier.width(4.dp))
-                        Text(
-                            text = stringResource(R.string.banner_try_simulate),
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
+                    if (isNotificationAccessGranted && !hasNotificationPermission) {
+                        OutlinedButton(
+                            onClick = onEnableLocalAlerts,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("enable_local_alerts_button"),
+                            border = BorderStroke(1.dp, BorderHairline)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.NotificationsActive,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.banner_enable_alerts),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    } else {
+                        OutlinedButton(
+                            onClick = onSimulateIncoming,
+                            modifier = Modifier
+                                .weight(1f)
+                                .testTag("banner_simulate_button"),
+                            border = BorderStroke(1.dp, BorderHairline)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.PlayArrow,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = stringResource(R.string.banner_try_simulate),
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -403,6 +493,8 @@ private fun NotificationFeedCard(
     item: PulseNotificationItem,
     timeText: String,
     onCardExpand: () -> Unit,
+    onToggleStar: () -> Unit,
+    onOpenReminderDialog: () -> Unit,
     onSendReply: (String) -> Unit,
     onDismiss: () -> Unit,
     onSecondaryAction: (String) -> Unit,
@@ -412,6 +504,7 @@ private fun NotificationFeedCard(
     var replyDraft by rememberSaveable(item.key) { mutableStateOf("") }
     val app = item.supportedApp
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val reminderFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
 
     Card(
         modifier = Modifier
@@ -424,7 +517,11 @@ private fun NotificationFeedCard(
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             width = 1.dp,
-            color = if (!item.isRead) app.accentColor.copy(alpha = 0.45f) else BorderHairline
+            color = when {
+                item.isStarred -> AmberSignal.copy(alpha = 0.6f)
+                !item.isRead -> app.accentColor.copy(alpha = 0.45f)
+                else -> BorderHairline
+            }
         ),
         colors = CardDefaults.cardColors(
             containerColor = if (!item.isRead) ElevatedSurface else MidnightSurface
@@ -503,6 +600,34 @@ private fun NotificationFeedCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
+                    IconButton(
+                        onClick = onToggleStar,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("star_button_${item.key}")
+                    ) {
+                        Icon(
+                            imageVector = if (item.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = if (item.isStarred) {
+                                stringResource(R.string.action_unstar_message)
+                            } else {
+                                stringResource(R.string.action_star_message)
+                            },
+                            tint = if (item.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                    IconButton(
+                        onClick = onOpenReminderDialog,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("remind_button_${item.key}")
+                    ) {
+                        Icon(
+                            imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
+                            contentDescription = stringResource(R.string.action_set_reminder),
+                            tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
                         text = timeText,
                         style = MaterialTheme.typography.labelSmall,
@@ -512,8 +637,75 @@ private fun NotificationFeedCard(
                         imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
                         contentDescription = if (expanded) "Collapse alert" else "Expand alert",
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 4.dp)
+                        modifier = Modifier.padding(start = 2.dp)
                     )
+                }
+            }
+
+            if (item.isStarred || item.reminderAt != null) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .horizontalScroll(rememberScrollState()),
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    if (item.isStarred) {
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = AmberSignalContainer,
+                            modifier = Modifier.testTag("starred_badge_${item.key}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.Star,
+                                    contentDescription = null,
+                                    tint = AmberSignal,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = stringResource(R.string.badge_starred_protected),
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = AmberSignal
+                                )
+                            }
+                        }
+                    }
+
+                    if (item.reminderAt != null) {
+                        val notePart = item.reminderNote?.let { " • $it" }.orEmpty()
+                        Surface(
+                            shape = RoundedCornerShape(8.dp),
+                            color = CyanPulseContainer,
+                            modifier = Modifier
+                                .clickable { onOpenReminderDialog() }
+                                .testTag("reminder_badge_${item.key}")
+                        ) {
+                            Row(
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(4.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Filled.AlarmOn,
+                                    contentDescription = null,
+                                    tint = CyanPulse,
+                                    modifier = Modifier.size(13.dp)
+                                )
+                                Text(
+                                    text = "Reminder: ${reminderFormatter.format(Date(item.reminderAt))}$notePart",
+                                    style = MaterialTheme.typography.labelSmall,
+                                    color = CyanPulse,
+                                    maxLines = 1,
+                                    overflow = TextOverflow.Ellipsis
+                                )
+                            }
+                        }
+                    }
                 }
             }
 
@@ -654,6 +846,28 @@ private fun NotificationFeedCard(
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
+                        OutlinedButton(
+                            onClick = onOpenReminderDialog,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("remind_chip_${item.key}"),
+                            border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.45f)),
+                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
+                                contentDescription = null,
+                                tint = CyanPulse,
+                                modifier = Modifier.size(15.dp)
+                            )
+                            Spacer(Modifier.width(4.dp))
+                            Text(
+                                text = if (item.reminderAt != null) "Edit Reminder" else "Remind",
+                                style = MaterialTheme.typography.labelMedium,
+                                color = CyanPulse
+                            )
+                        }
+
                         OutlinedButton(
                             onClick = onDismiss,
                             modifier = Modifier

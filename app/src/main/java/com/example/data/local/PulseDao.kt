@@ -11,21 +11,23 @@ import kotlinx.coroutines.flow.Flow
 interface PulseDao {
     @Query(
         "SELECT * FROM pulse_notifications " +
-            "WHERE isDismissed = 0 AND postTime >= :cutoffTime " +
+            "WHERE isDismissed = 0 AND (isStarred = 1 OR postTime >= :cutoffTime) " +
             "ORDER BY postTime DESC"
     )
     fun observeActiveNotifications(cutoffTime: Long): Flow<List<PulseNotificationEntity>>
 
     @Query(
         "SELECT * FROM pulse_notifications " +
-            "WHERE isDismissed = 0 AND postTime >= :cutoffTime " +
+            "WHERE isDismissed = 0 AND (isStarred = 1 OR postTime >= :cutoffTime) " +
             "ORDER BY postTime DESC"
     )
     suspend fun getActiveNotificationsSnapshot(cutoffTime: Long): List<PulseNotificationEntity>
 
     @Query(
         "SELECT * FROM extracted_links " +
-            "WHERE postTime >= :cutoffTime " +
+            "WHERE isStarred = 1 " +
+            "OR parentNotificationKey IN (SELECT `key` FROM pulse_notifications WHERE isStarred = 1 AND isDismissed = 0) " +
+            "OR postTime >= :cutoffTime " +
             "ORDER BY postTime DESC"
     )
     fun observeActiveLinks(cutoffTime: Long): Flow<List<ExtractedLinkEntity>>
@@ -62,8 +64,30 @@ interface PulseDao {
     @Query("UPDATE pulse_notifications SET isRead = 1 WHERE `key` = :key")
     suspend fun markAsRead(key: String)
 
-    @Query("UPDATE pulse_notifications SET isDismissed = 1 WHERE `key` = :key")
+    @Query("UPDATE pulse_notifications SET isDismissed = 1, reminderAt = NULL, reminderNote = NULL WHERE `key` = :key")
     suspend fun dismissByKey(key: String)
+
+    @Query("UPDATE pulse_notifications SET isStarred = :starred WHERE `key` = :key")
+    suspend fun updateNotificationStar(key: String, starred: Boolean)
+
+    @Query("UPDATE extracted_links SET isStarred = :starred WHERE parentNotificationKey = :parentKey")
+    suspend fun updateChildLinksStar(parentKey: String, starred: Boolean)
+
+    @Transaction
+    suspend fun setNotificationStarred(key: String, starred: Boolean) {
+        updateNotificationStar(key, starred)
+        updateChildLinksStar(key, starred)
+    }
+
+    @Query("UPDATE extracted_links SET isStarred = :starred WHERE id = :linkId")
+    suspend fun setLinkStarred(linkId: String, starred: Boolean)
+
+    @Query(
+        "UPDATE pulse_notifications " +
+            "SET reminderAt = :reminderAt, reminderNote = :reminderNote " +
+            "WHERE `key` = :key"
+    )
+    suspend fun updateReminder(key: String, reminderAt: Long?, reminderNote: String?)
 
     @Query(
         "UPDATE pulse_notifications " +
@@ -72,35 +96,44 @@ interface PulseDao {
     )
     suspend fun updateReplies(key: String, repliesJson: String)
 
-    @Query("DELETE FROM pulse_notifications WHERE postTime < :cutoffTime")
-    suspend fun deleteNotificationsOlderThan(cutoffTime: Long): Int
+    @Query("DELETE FROM pulse_notifications WHERE isStarred = 0 AND postTime < :cutoffTime")
+    suspend fun deleteExpiredUnstarredNotifications(cutoffTime: Long): Int
 
-    @Query("DELETE FROM extracted_links WHERE postTime < :cutoffTime")
-    suspend fun deleteLinksOlderThan(cutoffTime: Long): Int
+    @Query(
+        "DELETE FROM extracted_links " +
+            "WHERE isStarred = 0 " +
+            "AND parentNotificationKey NOT IN (SELECT `key` FROM pulse_notifications WHERE isStarred = 1) " +
+            "AND postTime < :cutoffTime"
+    )
+    suspend fun deleteExpiredUnstarredLinks(cutoffTime: Long): Int
 
     @Query("DELETE FROM digest_summaries WHERE generatedAt < :cutoffTime")
     suspend fun deleteDigestsOlderThan(cutoffTime: Long): Int
 
     @Transaction
     suspend fun purgeExpiredBefore(cutoffTime: Long): Int {
-        val deletedNotifications = deleteNotificationsOlderThan(cutoffTime)
-        val deletedLinks = deleteLinksOlderThan(cutoffTime)
+        val deletedNotifications = deleteExpiredUnstarredNotifications(cutoffTime)
+        val deletedLinks = deleteExpiredUnstarredLinks(cutoffTime)
         deleteDigestsOlderThan(cutoffTime)
         return deletedNotifications + deletedLinks
     }
 
     @Transaction
-    suspend fun clearAll() {
-        deleteAllLinks()
-        deleteAllNotifications()
+    suspend fun clearUnstarredSessionData() {
+        deleteUnstarredLinks()
+        deleteUnstarredNotifications()
         deleteAllDigests()
     }
 
-    @Query("DELETE FROM extracted_links")
-    suspend fun deleteAllLinks()
+    @Query(
+        "DELETE FROM extracted_links " +
+            "WHERE isStarred = 0 " +
+            "AND parentNotificationKey NOT IN (SELECT `key` FROM pulse_notifications WHERE isStarred = 1)"
+    )
+    suspend fun deleteUnstarredLinks()
 
-    @Query("DELETE FROM pulse_notifications")
-    suspend fun deleteAllNotifications()
+    @Query("DELETE FROM pulse_notifications WHERE isStarred = 0")
+    suspend fun deleteUnstarredNotifications()
 
     @Query("DELETE FROM digest_summaries")
     suspend fun deleteAllDigests()

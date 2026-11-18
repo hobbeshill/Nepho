@@ -9,7 +9,8 @@ import androidx.room.PrimaryKey
     tableName = "pulse_notifications",
     indices = [
         Index(value = ["postTime"]),
-        Index(value = ["packageName"])
+        Index(value = ["packageName"]),
+        Index(value = ["isStarred"])
     ]
 )
 data class PulseNotificationEntity(
@@ -28,7 +29,10 @@ data class PulseNotificationEntity(
     val repliesJson: String = "[]",
     val urlsJson: String = "[]",
     val isSimulated: Boolean = false,
-    val sourceChannel: String = "SHARE_SHEET"
+    val sourceChannel: String = "SHARE_SHEET",
+    val isStarred: Boolean = false,
+    val reminderAt: Long? = null,
+    val reminderNote: String? = null
 )
 
 @Entity(
@@ -43,7 +47,8 @@ data class PulseNotificationEntity(
     ],
     indices = [
         Index(value = ["parentNotificationKey"]),
-        Index(value = ["postTime"])
+        Index(value = ["postTime"]),
+        Index(value = ["isStarred"])
     ]
 )
 data class ExtractedLinkEntity(
@@ -56,7 +61,8 @@ data class ExtractedLinkEntity(
     val packageName: String,
     val appLabel: String,
     val senderTitle: String,
-    val postTime: Long
+    val postTime: Long,
+    val isStarred: Boolean = false
 )
 
 @Entity(tableName = "digest_summaries")

@@ -23,6 +23,7 @@ import kotlinx.coroutines.launch
 
 object LocalPulseNotifier {
     const val CHANNEL_ID = "nepho_stream"
+    const val REMINDER_CHANNEL_ID = "nepho_reminders"
     const val REMOTE_INPUT_KEY = "pulse_inline_reply"
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -49,6 +50,59 @@ object LocalPulseNotifier {
                 }
                 manager?.createNotificationChannel(channel)
             }
+            if (manager?.getNotificationChannel(REMINDER_CHANNEL_ID) == null) {
+                val reminderChannel = NotificationChannel(
+                    REMINDER_CHANNEL_ID,
+                    context.getString(R.string.reminder_channel_name),
+                    NotificationManager.IMPORTANCE_HIGH
+                ).apply {
+                    description = context.getString(R.string.reminder_channel_desc)
+                }
+                manager?.createNotificationChannel(reminderChannel)
+            }
+        }
+    }
+
+    fun postReminderNotification(
+        context: Context,
+        notificationId: Int,
+        appLabel: String,
+        title: String,
+        body: String,
+        reminderNote: String?
+    ) {
+        ensureChannel(context)
+        if (!hasNotificationPermission(context)) return
+
+        val openAppIntent = PendingIntent.getActivity(
+            context,
+            notificationId,
+            Intent(context, MainActivity::class.java).apply {
+                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val displayBody = if (!reminderNote.isNullOrBlank()) {
+            "Note: $reminderNote\n$body"
+        } else {
+            body
+        }
+
+        val notification = NotificationCompat.Builder(context, REMINDER_CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("Reminder • [$appLabel] $title")
+            .setContentText(displayBody)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(displayBody))
+            .setContentIntent(openAppIntent)
+            .setAutoCancel(true)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
+            .build()
+
+        try {
+            NotificationManagerCompat.from(context).notify(notificationId, notification)
+        } catch (_: SecurityException) {
+            // Permission revoked concurrently; ignore safely
         }
     }
 
@@ -61,7 +115,8 @@ object LocalPulseNotifier {
         title: String,
         body: String,
         canReply: Boolean,
-        secondaryActions: List<String>
+        secondaryActions: List<String>,
+        registerLocalFallbackHandle: Boolean = true
     ) {
         ensureChannel(context)
 
@@ -112,15 +167,18 @@ object LocalPulseNotifier {
             secondaryIntents[label] = secPendingIntent
         }
 
-        // Register real PendingIntent & RemoteInput handles in-memory keyed by notification key
-        repository.registerNativeActionHandle(
-            key = key,
-            handle = NativeReplyHandle(
-                replyPendingIntent = replyPendingIntent,
-                remoteInput = remoteInput,
-                secondaryActionIntents = secondaryIntents
+        if (registerLocalFallbackHandle) {
+            // Register real PendingIntent & RemoteInput handles in-memory keyed by notification key
+            repository.registerNativeActionHandle(
+                key = key,
+                handle = NativeReplyHandle(
+                    replyPendingIntent = replyPendingIntent,
+                    compatRemoteInput = remoteInput,
+                    secondaryActionIntents = secondaryIntents,
+                    isSelfBroadcast = true
+                )
             )
-        )
+        }
 
         if (!hasNotificationPermission(context)) return
 
@@ -171,7 +229,7 @@ class PulseActionReceiver : BroadcastReceiver() {
                         val results = RemoteInput.getResultsFromIntent(intent)
                         val replyText = results?.getCharSequence(LocalPulseNotifier.REMOTE_INPUT_KEY)?.toString()
                         if (!replyText.isNullOrBlank()) {
-                            repository.sendInlineReply(key, replyText)
+                            repository.sendInlineReply(key, replyText, fromShadeReceiver = true)
                         }
                         if (notificationId != -1) {
                             NotificationManagerCompat.from(context).cancel(notificationId)
@@ -179,7 +237,7 @@ class PulseActionReceiver : BroadcastReceiver() {
                     }
                     ACTION_SECONDARY -> {
                         val label = intent.getStringExtra(EXTRA_ACTION_LABEL) ?: "Mark Read"
-                        repository.executeSecondaryAction(key, label)
+                        repository.executeSecondaryAction(key, label, fromShadeReceiver = true)
                         if (notificationId != -1) {
                             NotificationManagerCompat.from(context).cancel(notificationId)
                         }

@@ -28,6 +28,8 @@ import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ContentCopy
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Search
+import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
@@ -69,6 +71,7 @@ fun LinksVaultTab(
     links: List<ExtractedLinkItem>,
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
+    onToggleLinkStar: (String, Boolean) -> Unit,
     onLinkCopied: () -> Unit,
     modifier: Modifier = Modifier
 ) {
@@ -189,6 +192,7 @@ fun LinksVaultTab(
                 VaultLinkCard(
                     link = link,
                     timeText = timeFormatter.format(Date(link.postTime)),
+                    onToggleStar = { onToggleLinkStar(link.id, link.isStarred) },
                     onOpenBrowser = {
                         val intent = Intent(Intent.ACTION_VIEW, Uri.parse(link.url)).apply {
                             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
@@ -210,6 +214,7 @@ fun LinksVaultTab(
 private fun VaultLinkCard(
     link: ExtractedLinkItem,
     timeText: String,
+    onToggleStar: () -> Unit,
     onOpenBrowser: () -> Unit,
     onCopyLink: () -> Unit
 ) {
@@ -223,7 +228,10 @@ private fun VaultLinkCard(
             .fillMaxWidth()
             .testTag("vault_link_card_${link.id}"),
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, BorderHairline),
+        border = BorderStroke(
+            width = 1.dp,
+            color = if (link.isStarred) AmberSignal.copy(alpha = 0.6f) else BorderHairline
+        ),
         colors = CardDefaults.cardColors(containerColor = MidnightSurface)
     ) {
         Column(
@@ -265,11 +273,25 @@ private fun VaultLinkCard(
                     }
                 }
 
-                Text(
-                    text = "${remainingHours}h ${remainingMinutes}m left",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = AmberSignal
-                )
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = if (link.isStarred) "Starred • Protected" else "${remainingHours}h ${remainingMinutes}m left",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = AmberSignal
+                    )
+                    IconButton(
+                        onClick = onToggleStar,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("vault_star_button_${link.id}")
+                    ) {
+                        Icon(
+                            imageVector = if (link.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                            contentDescription = if (link.isStarred) "Unstar link" else "Star link",
+                            tint = if (link.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
+                }
             }
 
             Text(

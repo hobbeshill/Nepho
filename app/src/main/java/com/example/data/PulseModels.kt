@@ -23,7 +23,10 @@ data class PulseNotificationItem(
     val replies: List<ReplyEntry>,
     val urls: List<String>,
     val isSimulated: Boolean,
-    val sourceChannel: String
+    val sourceChannel: String,
+    val isStarred: Boolean = false,
+    val reminderAt: Long? = null,
+    val reminderNote: String? = null
 ) {
     val supportedApp: SupportedApp
         get() = SupportedApp.fromPackageName(packageName)
@@ -38,7 +41,8 @@ data class ExtractedLinkItem(
     val packageName: String,
     val appLabel: String,
     val senderTitle: String,
-    val postTime: Long
+    val postTime: Long,
+    val isStarred: Boolean = false
 ) {
     val supportedApp: SupportedApp
         get() = SupportedApp.fromPackageName(packageName)
@@ -75,6 +79,19 @@ data class SessionMetrics(
     val unreadTotal: Int = 0,
     val unreadByApp: Map<SupportedApp, Int> = emptyMap(),
     val totalLinks: Int = 0
+)
+
+enum class ShadeMode {
+    SILENT,
+    NEPHO_ALERT
+}
+
+data class AppShadePreference(
+    val packageName: String,
+    val appLabel: String,
+    val isOptedIn: Boolean,
+    val shadeMode: ShadeMode,
+    val isCoreApp: Boolean
 )
 
 object PulseJsonCodec {

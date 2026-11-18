@@ -32,6 +32,7 @@ import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -83,17 +84,22 @@ import java.util.Locale
 @Composable
 fun NephoApp(
     viewModel: PulseViewModel,
-    onRequestNotificationPermission: () -> Unit
+    onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationAccessSettings: () -> Unit
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val sessionOpenedAt by viewModel.sessionOpenedAt.collectAsStateWithLifecycle()
     val bannerDismissed by viewModel.bannerDismissed.collectAsStateWithLifecycle()
     val hasNotificationPermission by viewModel.hasNotificationPermission.collectAsStateWithLifecycle()
+    val isNotificationAccessGranted by viewModel.isNotificationAccessGranted.collectAsStateWithLifecycle()
+    val defaultShadeMode by viewModel.defaultShadeMode.collectAsStateWithLifecycle()
+    val shadePreferenceItems by viewModel.shadePreferenceItems.collectAsStateWithLifecycle()
     val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val vaultSearchQuery by viewModel.vaultSearchQuery.collectAsStateWithLifecycle()
     val selectedAppFilter by viewModel.selectedAppFilter.collectAsStateWithLifecycle()
     val unreadOnly by viewModel.unreadOnly.collectAsStateWithLifecycle()
     val hasLinksOnly by viewModel.hasLinksOnly.collectAsStateWithLifecycle()
+    val starredOnly by viewModel.starredOnly.collectAsStateWithLifecycle()
     val notifications by viewModel.filteredNotifications.collectAsStateWithLifecycle()
     val links by viewModel.activeLinks.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
@@ -102,6 +108,8 @@ fun NephoApp(
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by remember { mutableStateOf(false) }
+    var showShadePrefsDialog by remember { mutableStateOf(false) }
+    var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     LaunchedEffect(Unit) {
@@ -120,6 +128,32 @@ fun NephoApp(
                     body = body,
                     sourceChannel = "MANUAL_CAPTURE"
                 )
+            }
+        )
+    }
+
+    if (showShadePrefsDialog) {
+        ShadePreferencesDialog(
+            defaultShadeMode = defaultShadeMode,
+            appPreferences = shadePreferenceItems,
+            hasNotificationPermission = hasNotificationPermission,
+            onSetDefaultShadeMode = viewModel::setDefaultShadeMode,
+            onSetAppOptedIn = viewModel::setAppOptedIn,
+            onSetAppShadeMode = viewModel::setAppShadeMode,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            onDismiss = { showShadePrefsDialog = false }
+        )
+    }
+
+    reminderTargetItem?.let { target ->
+        SetReminderDialog(
+            item = target,
+            onDismiss = { reminderTargetItem = null },
+            onSchedule = { triggerAt, note ->
+                viewModel.scheduleReminder(target.key, triggerAt, note)
+            },
+            onClearReminder = {
+                viewModel.clearReminder(target.key)
             }
         )
     }
@@ -176,6 +210,19 @@ fun NephoApp(
                         },
                         actions = {
                             IconButton(
+                                onClick = { showShadePrefsDialog = true },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("shade_preferences_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Tune,
+                                    contentDescription = stringResource(R.string.action_shade_preferences),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+
+                            IconButton(
                                 onClick = { viewModel.resetSession() },
                                 modifier = Modifier
                                     .minimumInteractiveComponentSize()
@@ -205,6 +252,17 @@ fun NephoApp(
                                     expanded = menuExpanded,
                                     onDismissRequest = { menuExpanded = false }
                                 ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_shade_preferences)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Tune, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showShadePrefsDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_shade_preferences")
+                                    )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_simulate_batch)) },
                                         leadingIcon = {
@@ -377,16 +435,23 @@ fun NephoApp(
                                     selectedAppFilter = selectedAppFilter,
                                     unreadOnly = unreadOnly,
                                     hasLinksOnly = hasLinksOnly,
+                                    starredOnly = starredOnly,
                                     bannerDismissed = bannerDismissed,
                                     hasNotificationPermission = hasNotificationPermission,
+                                    isNotificationAccessGranted = isNotificationAccessGranted,
                                     onSearchQueryChange = viewModel::updateSearchQuery,
                                     onSelectAppFilter = viewModel::selectAppFilter,
                                     onToggleUnreadOnly = viewModel::toggleUnreadOnly,
                                     onToggleHasLinksOnly = viewModel::toggleHasLinksOnly,
+                                    onToggleStarredOnly = viewModel::toggleStarredOnly,
                                     onRequestNotificationPermission = onRequestNotificationPermission,
+                                    onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
+                                    onOpenShadePreferences = { showShadePrefsDialog = true },
                                     onSimulateIncoming = { viewModel.simulateIncomingBatch(false) },
                                     onDismissBanner = viewModel::dismissBanner,
                                     onMarkAsRead = viewModel::markAsRead,
+                                    onToggleStar = viewModel::toggleNotificationStar,
+                                    onOpenReminderDialog = { item -> reminderTargetItem = item },
                                     onSendReply = viewModel::sendInlineReply,
                                     onDismissItem = viewModel::dismissNotification,
                                     onSecondaryAction = viewModel::executeSecondaryAction,
@@ -408,6 +473,7 @@ fun NephoApp(
                                     links = links,
                                     searchQuery = vaultSearchQuery,
                                     onSearchQueryChange = viewModel::updateVaultSearchQuery,
+                                    onToggleLinkStar = viewModel::toggleLinkStar,
                                     onLinkCopied = viewModel::notifyLinkCopied
                                 )
                             }

@@ -12,6 +12,8 @@ import com.example.data.local.PulseDao
 import com.example.data.local.PulseDatabase
 import com.example.data.local.PulseNotificationEntity
 import com.example.data.local.SessionPreferences
+import com.example.notifications.NephoNotificationListener
+import com.example.worker.ReminderWorker
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,9 +23,11 @@ import kotlinx.coroutines.flow.map
 import java.util.concurrent.ConcurrentHashMap
 
 data class NativeReplyHandle(
-    val replyPendingIntent: PendingIntent,
-    val remoteInput: RemoteInput,
-    val secondaryActionIntents: Map<String, PendingIntent> = emptyMap()
+    val replyPendingIntent: PendingIntent?,
+    val frameworkRemoteInputs: Array<android.app.RemoteInput>? = null,
+    val compatRemoteInput: RemoteInput? = null,
+    val secondaryActionIntents: Map<String, PendingIntent> = emptyMap(),
+    val isSelfBroadcast: Boolean = false
 )
 
 class PulseRepository private constructor(
@@ -161,28 +165,87 @@ class PulseRepository private constructor(
         )
     }
 
+    suspend fun getNotificationByKey(key: String): PulseNotificationEntity? =
+        dao.getByKey(key)
+
+    suspend fun toggleNotificationStar(key: String): Boolean {
+        val existing = dao.getByKey(key) ?: return false
+        val next = !existing.isStarred
+        dao.setNotificationStarred(key, next)
+        return next
+    }
+
+    suspend fun toggleLinkStar(linkId: String, currentlyStarred: Boolean): Boolean {
+        val next = !currentlyStarred
+        dao.setLinkStarred(linkId, next)
+        return next
+    }
+
+    suspend fun scheduleReminder(key: String, triggerAtMillis: Long, reminderNote: String?) {
+        val cleanNote = reminderNote?.trim()?.takeIf { it.isNotEmpty() }
+        dao.updateReminder(key, triggerAtMillis, cleanNote)
+        ReminderWorker.scheduleReminder(appContext, key, triggerAtMillis, cleanNote)
+    }
+
+    suspend fun cancelReminder(key: String) {
+        dao.updateReminder(key, null, null)
+        ReminderWorker.cancelReminder(appContext, key)
+    }
+
+    suspend fun clearReminderMetadataOnly(key: String) {
+        dao.updateReminder(key, null, null)
+    }
+
     suspend fun markAsRead(key: String) {
         dao.markAsRead(key)
     }
 
-    suspend fun sendInlineReply(key: String, replyText: String): Boolean {
+    suspend fun isAppOptedIn(packageName: String): Boolean =
+        sessionPreferences.isAppOptedIn(packageName)
+
+    suspend fun shouldPostShadeAlert(packageName: String): Boolean =
+        sessionPreferences.getEffectiveShadeMode(packageName) == ShadeMode.NEPHO_ALERT
+
+    suspend fun sendInlineReply(
+        key: String,
+        replyText: String,
+        fromShadeReceiver: Boolean = false
+    ): Boolean {
         val trimmed = replyText.trim()
         if (trimmed.isEmpty()) return false
 
         val existing = dao.getByKey(key) ?: return false
         val nativeHandle = actionHandleMap[key]
-        if (nativeHandle != null) {
+        val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
+            (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
+        if (shouldDispatchIntent && nativeHandle != null) {
             try {
                 val fillInIntent = Intent()
-                val resultsBundle = Bundle().apply {
-                    putCharSequence(nativeHandle.remoteInput.resultKey, trimmed)
+                val frameworkInputs = nativeHandle.frameworkRemoteInputs
+                val compatInput = nativeHandle.compatRemoteInput
+                if (!frameworkInputs.isNullOrEmpty()) {
+                    val resultsBundle = Bundle().apply {
+                        frameworkInputs.forEach { ri ->
+                            putCharSequence(ri.resultKey, trimmed)
+                        }
+                    }
+                    android.app.RemoteInput.addResultsToIntent(
+                        frameworkInputs,
+                        fillInIntent,
+                        resultsBundle
+                    )
+                    nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
+                } else if (compatInput != null) {
+                    val resultsBundle = Bundle().apply {
+                        putCharSequence(compatInput.resultKey, trimmed)
+                    }
+                    RemoteInput.addResultsToIntent(
+                        arrayOf(compatInput),
+                        fillInIntent,
+                        resultsBundle
+                    )
+                    nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
                 }
-                RemoteInput.addResultsToIntent(
-                    arrayOf(nativeHandle.remoteInput),
-                    fillInIntent,
-                    resultsBundle
-                )
-                nativeHandle.replyPendingIntent.send(appContext, 0, fillInIntent)
             } catch (_: PendingIntent.CanceledException) {
                 // Local intent expired; still record reply in thread
             }
@@ -199,13 +262,24 @@ class PulseRepository private constructor(
         if (existing != null) {
             NotificationManagerCompat.from(appContext).cancel(existing.notificationId)
         }
+        NephoNotificationListener.cancelSystemNotification(key)
+        ReminderWorker.cancelReminder(appContext, key)
         actionHandleMap.remove(key)
         dao.dismissByKey(key)
     }
 
-    suspend fun executeSecondaryAction(key: String, actionLabel: String) {
+    suspend fun executeSecondaryAction(
+        key: String,
+        actionLabel: String,
+        fromShadeReceiver: Boolean = false
+    ) {
         val handle = actionHandleMap[key]
-        val pendingIntent = handle?.secondaryActionIntents?.get(actionLabel)
+        val shouldDispatchIntent = handle != null && (!fromShadeReceiver || !handle.isSelfBroadcast)
+        val pendingIntent = if (shouldDispatchIntent) {
+            handle?.secondaryActionIntents?.get(actionLabel)
+        } else {
+            null
+        }
         if (pendingIntent != null) {
             try {
                 pendingIntent.send()
@@ -236,7 +310,7 @@ class PulseRepository private constructor(
     suspend fun resetSession(): Long {
         NotificationManagerCompat.from(appContext).cancelAll()
         actionHandleMap.clear()
-        dao.clearAll()
+        dao.clearUnstarredSessionData()
         val now = sessionPreferences.resetSessionOpenedAt()
         retentionCutoffTicker.value = now - RETENTION_WINDOW_MS
         return now
@@ -285,7 +359,10 @@ private fun PulseNotificationEntity.toDomain(): PulseNotificationItem =
         replies = PulseJsonCodec.decodeReplies(repliesJson),
         urls = PulseJsonCodec.decodeStringList(urlsJson),
         isSimulated = isSimulated,
-        sourceChannel = sourceChannel
+        sourceChannel = sourceChannel,
+        isStarred = isStarred,
+        reminderAt = reminderAt,
+        reminderNote = reminderNote
     )
 
 private fun ExtractedLinkEntity.toDomain(): ExtractedLinkItem =
@@ -298,7 +375,8 @@ private fun ExtractedLinkEntity.toDomain(): ExtractedLinkItem =
         packageName = packageName,
         appLabel = appLabel,
         senderTitle = senderTitle,
-        postTime = postTime
+        postTime = postTime,
+        isStarred = isStarred
     )
 
 private fun DigestSummaryEntity.toDomain(): DigestResult =

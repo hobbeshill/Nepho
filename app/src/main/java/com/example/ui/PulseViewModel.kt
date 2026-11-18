@@ -5,14 +5,17 @@ import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.ai.SmartDigestService
+import com.example.data.AppShadePreference
 import com.example.data.DigestResult
 import com.example.data.ExtractedLinkItem
 import com.example.data.MockNotificationFactory
 import com.example.data.PulseNotificationItem
 import com.example.data.PulseRepository
 import com.example.data.SessionMetrics
+import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.notifications.LocalPulseNotifier
+import com.example.notifications.NephoNotificationListener
 import com.example.worker.RetentionPurgeWorker
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.TimeoutCancellationException
@@ -66,6 +69,9 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     private val _hasLinksOnly = MutableStateFlow(false)
     val hasLinksOnly: StateFlow<Boolean> = _hasLinksOnly.asStateFlow()
 
+    private val _starredOnly = MutableStateFlow(false)
+    val starredOnly: StateFlow<Boolean> = _starredOnly.asStateFlow()
+
     private val _digestState = MutableStateFlow<DigestUiState>(DigestUiState.Idle)
     val digestState: StateFlow<DigestUiState> = _digestState.asStateFlow()
 
@@ -73,6 +79,11 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         LocalPulseNotifier.hasNotificationPermission(application)
     )
     val hasNotificationPermission: StateFlow<Boolean> = _hasNotificationPermission.asStateFlow()
+
+    private val _isNotificationAccessGranted = MutableStateFlow(
+        NephoNotificationListener.isListenerEnabled(application)
+    )
+    val isNotificationAccessGranted: StateFlow<Boolean> = _isNotificationAccessGranted.asStateFlow()
 
     private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
     val snackbarEvents: SharedFlow<String> = _snackbarEvents.asSharedFlow()
@@ -83,6 +94,41 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     val bannerDismissed: StateFlow<Boolean> = repository.sessionPreferences.bannerDismissedFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
+    val defaultShadeMode: StateFlow<ShadeMode> = repository.sessionPreferences.defaultShadeModeFlow
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), ShadeMode.SILENT)
+
+    val shadePreferenceItems: StateFlow<List<AppShadePreference>> = combine(
+        repository.sessionPreferences.perAppShadeModesFlow,
+        repository.sessionPreferences.defaultShadeModeFlow,
+        repository.sessionPreferences.observedAppsFlow,
+        repository.sessionPreferences.optedOutAppsFlow
+    ) { perAppModes, defaultMode, observedApps, optedOutApps ->
+        val corePackages = SupportedApp.filterableApps.map { it.packageName }.toSet()
+        val selfPkg = getApplication<Application>().packageName
+        val coreItems = SupportedApp.filterableApps.map { app ->
+            AppShadePreference(
+                packageName = app.packageName,
+                appLabel = app.displayName,
+                isOptedIn = app.packageName !in optedOutApps,
+                shadeMode = perAppModes[app.packageName] ?: defaultMode,
+                isCoreApp = true
+            )
+        }
+        val extraItems = observedApps.entries
+            .filter { (pkg, _) -> pkg !in corePackages && pkg != selfPkg && pkg != SupportedApp.OTHER.packageName }
+            .sortedBy { it.value.lowercase() }
+            .map { (pkg, label) ->
+                AppShadePreference(
+                    packageName = pkg,
+                    appLabel = label,
+                    isOptedIn = pkg !in optedOutApps,
+                    shadeMode = perAppModes[pkg] ?: defaultMode,
+                    isCoreApp = false
+                )
+            }
+        coreItems + extraItems
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
     val allActiveNotifications: StateFlow<List<PulseNotificationItem>> =
         repository.activeNotificationsFlow
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
@@ -92,18 +138,27 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _searchQuery,
         _selectedAppFilter,
         _unreadOnly,
-        _hasLinksOnly
-    ) { items, query, appFilter, unread, hasLinks ->
+        _hasLinksOnly,
+        _starredOnly
+    ) { values ->
+        @Suppress("UNCHECKED_CAST")
+        val items = values[0] as List<PulseNotificationItem>
+        val query = values[1] as String
+        val appFilter = values[2] as SupportedApp?
+        val unread = values[3] as Boolean
+        val hasLinks = values[4] as Boolean
+        val starred = values[5] as Boolean
         val q = query.trim().lowercase()
         items.filter { item ->
             val matchesApp = appFilter == null || item.packageName == appFilter.packageName
             val matchesUnread = !unread || !item.isRead
             val matchesLinks = !hasLinks || item.urls.isNotEmpty()
+            val matchesStarred = !starred || item.isStarred
             val matchesQuery = q.isEmpty() ||
                 item.title.lowercase().contains(q) ||
                 item.body.lowercase().contains(q) ||
                 item.appLabel.lowercase().contains(q)
-            matchesApp && matchesUnread && matchesLinks && matchesQuery
+            matchesApp && matchesUnread && matchesLinks && matchesStarred && matchesQuery
         }
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
@@ -185,10 +240,67 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _hasLinksOnly.value = !_hasLinksOnly.value
     }
 
+    fun toggleStarredOnly() {
+        _starredOnly.value = !_starredOnly.value
+    }
+
+    fun toggleNotificationStar(key: String) {
+        viewModelScope.launch {
+            val isNowStarred = repository.toggleNotificationStar(key)
+            _snackbarEvents.tryEmit(
+                if (isNowStarred) {
+                    "Starred! Protected from 24h auto-purge and session resets."
+                } else {
+                    "Star removed. Standard 24h retention applies."
+                }
+            )
+        }
+    }
+
+    fun toggleLinkStar(linkId: String, currentlyStarred: Boolean) {
+        viewModelScope.launch {
+            val isNowStarred = repository.toggleLinkStar(linkId, currentlyStarred)
+            _snackbarEvents.tryEmit(
+                if (isNowStarred) {
+                    "Link starred! Protected from 24h auto-purge."
+                } else {
+                    "Link star removed."
+                }
+            )
+        }
+    }
+
+    fun scheduleReminder(key: String, triggerAtMillis: Long, note: String?) {
+        viewModelScope.launch {
+            repository.scheduleReminder(key, triggerAtMillis, note)
+            val timeStr = java.text.SimpleDateFormat("MMM d, HH:mm", java.util.Locale.getDefault())
+                .format(java.util.Date(triggerAtMillis))
+            val suffix = if (!LocalPulseNotifier.hasNotificationPermission(getApplication())) {
+                " (Enable Local Alerts to receive push notifications)"
+            } else {
+                ""
+            }
+            _snackbarEvents.tryEmit("Reminder set for $timeStr$suffix.")
+        }
+    }
+
+    fun clearReminder(key: String) {
+        viewModelScope.launch {
+            repository.cancelReminder(key)
+            _snackbarEvents.tryEmit("Reminder cleared.")
+        }
+    }
+
     fun dismissBanner() {
         viewModelScope.launch {
             repository.sessionPreferences.setBannerDismissed(true)
         }
+    }
+
+    fun refreshAccessAndPermissions() {
+        val ctx = getApplication<Application>()
+        _hasNotificationPermission.value = LocalPulseNotifier.hasNotificationPermission(ctx)
+        _isNotificationAccessGranted.value = NephoNotificationListener.isListenerEnabled(ctx)
     }
 
     fun refreshNotificationPermission() {
@@ -198,7 +310,25 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             repository.sessionPreferences.setLocalAlertsEnabled(granted)
         }
         if (granted) {
-            _snackbarEvents.tryEmit("Local interactive alerts enabled.")
+            _snackbarEvents.tryEmit("Nepho shade alerts enabled.")
+        }
+    }
+
+    fun setAppOptedIn(packageName: String, optedIn: Boolean) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setAppOptedIn(packageName, optedIn)
+        }
+    }
+
+    fun setAppShadeMode(packageName: String, mode: ShadeMode) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setAppShadeMode(packageName, mode)
+        }
+    }
+
+    fun setDefaultShadeMode(mode: ShadeMode) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setDefaultShadeMode(mode)
         }
     }
 
@@ -212,9 +342,17 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
             var totalLinks = 0
             var totalPurged = 0
+            var ingestedActive = 0
+            var skippedOptedOut = 0
             val ctx = getApplication<Application>()
 
             specs.forEach { spec ->
+                val isExpiredSpec = spec.postTime < now - PulseRepository.RETENTION_WINDOW_MS
+                if (!isExpiredSpec && !repository.isAppOptedIn(spec.app.packageName)) {
+                    skippedOptedOut++
+                    return@forEach
+                }
+
                 val result = repository.ingestNotification(
                     key = spec.key,
                     notificationId = spec.notificationId,
@@ -228,10 +366,13 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                     isSimulated = true,
                     sourceChannel = "SIMULATED"
                 )
+                if (!isExpiredSpec) {
+                    ingestedActive++
+                }
                 totalLinks += result.extractedLinkCount
                 totalPurged += result.purgedExpiredCount
 
-                if (spec.postTime >= now - PulseRepository.RETENTION_WINDOW_MS) {
+                if (!isExpiredSpec && repository.shouldPostShadeAlert(spec.app.packageName)) {
                     LocalPulseNotifier.postInteractiveLocalNotification(
                         context = ctx,
                         repository = repository,
@@ -246,10 +387,11 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 }
             }
 
+            val optedOutNote = if (skippedOptedOut > 0) " ($skippedOptedOut skipped: opted out)" else ""
             val message = if (includeExpiredTest) {
-                "Simulated 5 active alerts + 25h expired test item ($totalPurged expired entries auto-purged)."
+                "Simulated $ingestedActive active alerts + 25h expired test item$optedOutNote ($totalPurged expired auto-purged)."
             } else {
-                "Simulated 5 notifications ($totalLinks URLs captured into Links Vault)."
+                "Simulated $ingestedActive notifications$optedOutNote ($totalLinks URLs captured into Links Vault)."
             }
             _snackbarEvents.tryEmit(message)
         }
@@ -287,17 +429,19 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 sourceChannel = sourceChannel
             )
 
-            LocalPulseNotifier.postInteractiveLocalNotification(
-                context = getApplication(),
-                repository = repository,
-                key = key,
-                notificationId = notifId,
-                appLabel = app.displayName,
-                title = cleanTitle,
-                body = cleanBody,
-                canReply = true,
-                secondaryActions = secondary
-            )
+            if (repository.shouldPostShadeAlert(app.packageName)) {
+                LocalPulseNotifier.postInteractiveLocalNotification(
+                    context = getApplication(),
+                    repository = repository,
+                    key = key,
+                    notificationId = notifId,
+                    appLabel = app.displayName,
+                    title = cleanTitle,
+                    body = cleanBody,
+                    canReply = true,
+                    secondaryActions = secondary
+                )
+            }
 
             val linkMsg = if (result.extractedLinkCount > 0) {
                 " • ${result.extractedLinkCount} link(s) saved to Vault"
@@ -385,9 +529,10 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             _selectedAppFilter.value = null
             _unreadOnly.value = false
             _hasLinksOnly.value = false
+            _starredOnly.value = false
             _searchQuery.value = ""
             _vaultSearchQuery.value = ""
-            _snackbarEvents.tryEmit("Session reset. 24h window restarted from now.")
+            _snackbarEvents.tryEmit("Session reset. Starred items preserved; 24h window restarted.")
         }
     }
 

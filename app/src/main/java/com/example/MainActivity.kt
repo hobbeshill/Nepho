@@ -4,6 +4,7 @@ import android.Manifest
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -45,10 +46,18 @@ class MainActivity : ComponentActivity() {
                         } else {
                             viewModel.refreshNotificationPermission()
                         }
+                    },
+                    onOpenNotificationAccessSettings = {
+                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
                     }
                 )
             }
         }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        viewModel.refreshAccessAndPermissions()
     }
 
     override fun onNewIntent(intent: Intent) {
