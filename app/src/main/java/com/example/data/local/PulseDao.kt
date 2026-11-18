@@ -17,13 +17,6 @@ interface PulseDao {
     fun observeActiveNotifications(cutoffTime: Long): Flow<List<PulseNotificationEntity>>
 
     @Query(
-        "SELECT * FROM pulse_notifications " +
-            "WHERE isDismissed = 0 AND (isStarred = 1 OR postTime >= :cutoffTime) " +
-            "ORDER BY postTime DESC"
-    )
-    suspend fun getActiveNotificationsSnapshot(cutoffTime: Long): List<PulseNotificationEntity>
-
-    @Query(
         "SELECT * FROM extracted_links " +
             "WHERE isStarred = 1 " +
             "OR parentNotificationKey IN (SELECT `key` FROM pulse_notifications WHERE isStarred = 1 AND isDismissed = 0) " +
@@ -31,12 +24,6 @@ interface PulseDao {
             "ORDER BY postTime DESC"
     )
     fun observeActiveLinks(cutoffTime: Long): Flow<List<ExtractedLinkEntity>>
-
-    @Query(
-        "SELECT * FROM digest_summaries " +
-            "WHERE id = 1 AND generatedAt >= :cutoffTime LIMIT 1"
-    )
-    fun observeLatestDigest(cutoffTime: Long): Flow<DigestSummaryEntity?>
 
     @Query("SELECT * FROM pulse_notifications WHERE `key` = :key LIMIT 1")
     suspend fun getByKey(key: String): PulseNotificationEntity?
@@ -57,9 +44,6 @@ interface PulseDao {
             insertLinks(links)
         }
     }
-
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
-    suspend fun saveDigest(digest: DigestSummaryEntity)
 
     @Query("UPDATE pulse_notifications SET isRead = 1 WHERE `key` = :key")
     suspend fun markAsRead(key: String)
@@ -107,14 +91,10 @@ interface PulseDao {
     )
     suspend fun deleteExpiredUnstarredLinks(cutoffTime: Long): Int
 
-    @Query("DELETE FROM digest_summaries WHERE generatedAt < :cutoffTime")
-    suspend fun deleteDigestsOlderThan(cutoffTime: Long): Int
-
     @Transaction
     suspend fun purgeExpiredBefore(cutoffTime: Long): Int {
         val deletedNotifications = deleteExpiredUnstarredNotifications(cutoffTime)
         val deletedLinks = deleteExpiredUnstarredLinks(cutoffTime)
-        deleteDigestsOlderThan(cutoffTime)
         return deletedNotifications + deletedLinks
     }
 
@@ -122,7 +102,6 @@ interface PulseDao {
     suspend fun clearUnstarredSessionData() {
         deleteUnstarredLinks()
         deleteUnstarredNotifications()
-        deleteAllDigests()
     }
 
     @Query(
@@ -135,6 +114,6 @@ interface PulseDao {
     @Query("DELETE FROM pulse_notifications WHERE isStarred = 0")
     suspend fun deleteUnstarredNotifications()
 
-    @Query("DELETE FROM digest_summaries")
-    suspend fun deleteAllDigests()
+    @Query("SELECT imageUri FROM pulse_notifications WHERE imageUri IS NOT NULL")
+    suspend fun getAllImageUris(): List<String>
 }

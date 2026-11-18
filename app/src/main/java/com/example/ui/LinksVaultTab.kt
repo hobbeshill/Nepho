@@ -72,7 +72,6 @@ fun LinksVaultTab(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onToggleLinkStar: (String, Boolean) -> Unit,
-    onLinkCopied: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -202,7 +201,6 @@ fun LinksVaultTab(
                     onCopyLink = {
                         val clipboard = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
                         clipboard.setPrimaryClip(ClipData.newPlainText("Nepho Link", link.url))
-                        onLinkCopied()
                     }
                 )
             }

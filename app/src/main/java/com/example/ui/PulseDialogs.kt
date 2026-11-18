@@ -9,17 +9,22 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
+import androidx.compose.material3.Icon
+import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Surface
@@ -325,6 +330,7 @@ fun ShadePreferencesDialog(
     onSetDefaultShadeMode: (ShadeMode) -> Unit,
     onSetAppOptedIn: (String, Boolean) -> Unit,
     onSetAppShadeMode: (String, ShadeMode) -> Unit,
+    onOpenSystemNotificationSettings: (String) -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onDismiss: () -> Unit
 ) {
@@ -339,7 +345,7 @@ fun ShadePreferencesDialog(
         text = {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Text(
-                    text = "All apps start opted in so Nepho captures notifications and suppresses duplicates. Toggle an app off to opt out and let its original notifications pass through untouched.",
+                    text = "All apps start opted in so Nepho captures notifications and suppresses duplicates. Toggle an app off to opt out, pick Silence for feed-only capture, or Block to stop its notifications entirely. Silencing or blocking also opens that app's system notification settings so you can apply the same rule OS-wide.",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
@@ -381,7 +387,9 @@ fun ShadePreferencesDialog(
                     onToggleOptedIn = {},
                     selectedMode = defaultShadeMode,
                     tagPrefix = "default",
-                    onSelectMode = onSetDefaultShadeMode
+                    allowBlock = false,
+                    onSelectMode = onSetDefaultShadeMode,
+                    onOpenSystemSettings = null
                 )
 
                 HorizontalDivider(color = BorderHairline)
@@ -401,7 +409,9 @@ fun ShadePreferencesDialog(
                             onToggleOptedIn = { optedIn -> onSetAppOptedIn(pref.packageName, optedIn) },
                             selectedMode = pref.shadeMode,
                             tagPrefix = pref.packageName,
-                            onSelectMode = { mode -> onSetAppShadeMode(pref.packageName, mode) }
+                            allowBlock = true,
+                            onSelectMode = { mode -> onSetAppShadeMode(pref.packageName, mode) },
+                            onOpenSystemSettings = { onOpenSystemNotificationSettings(pref.packageName) }
                         )
                     }
                 }
@@ -427,7 +437,9 @@ private fun ShadeModeRow(
     onToggleOptedIn: (Boolean) -> Unit,
     selectedMode: ShadeMode,
     tagPrefix: String,
-    onSelectMode: (ShadeMode) -> Unit
+    allowBlock: Boolean,
+    onSelectMode: (ShadeMode) -> Unit,
+    onOpenSystemSettings: (() -> Unit)?
 ) {
     Column(
         modifier = Modifier.fillMaxWidth(),
@@ -453,6 +465,21 @@ private fun ShadeModeRow(
                     overflow = TextOverflow.Ellipsis
                 )
             }
+            if (onOpenSystemSettings != null) {
+                IconButton(
+                    onClick = onOpenSystemSettings,
+                    modifier = Modifier
+                        .semantics { contentDescription = "Open system notification settings for $title" }
+                        .testTag("system_settings_$tagPrefix")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Settings,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(18.dp)
+                    )
+                }
+            }
             if (showOptInSwitch) {
                 Spacer(Modifier.width(8.dp))
                 Switch(
@@ -471,16 +498,16 @@ private fun ShadeModeRow(
 
         if (isOptedIn) {
             Row(
-                modifier = Modifier.fillMaxWidth(),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .horizontalScroll(rememberScrollState()),
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 FilterChip(
                     selected = selectedMode == ShadeMode.SILENT,
                     onClick = { onSelectMode(ShadeMode.SILENT) },
-                    label = { Text("Silent (Feed Only)") },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("shade_silent_$tagPrefix"),
+                    label = { Text("Silence (Feed Only)") },
+                    modifier = Modifier.testTag("shade_silent_$tagPrefix"),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = CyanPulseContainer,
                         selectedLabelColor = CyanPulse
@@ -490,13 +517,31 @@ private fun ShadeModeRow(
                     selected = selectedMode == ShadeMode.NEPHO_ALERT,
                     onClick = { onSelectMode(ShadeMode.NEPHO_ALERT) },
                     label = { Text("Nepho Alert") },
-                    modifier = Modifier
-                        .weight(1f)
-                        .testTag("shade_alert_$tagPrefix"),
+                    modifier = Modifier.testTag("shade_alert_$tagPrefix"),
                     colors = FilterChipDefaults.filterChipColors(
                         selectedContainerColor = CyanPulseContainer,
                         selectedLabelColor = CyanPulse
                     )
+                )
+                if (allowBlock) {
+                    FilterChip(
+                        selected = selectedMode == ShadeMode.BLOCKED,
+                        onClick = { onSelectMode(ShadeMode.BLOCKED) },
+                        label = { Text("Block") },
+                        modifier = Modifier.testTag("shade_blocked_$tagPrefix"),
+                        colors = FilterChipDefaults.filterChipColors(
+                            selectedContainerColor = CrimsonError.copy(alpha = 0.18f),
+                            selectedLabelColor = CrimsonError
+                        )
+                    )
+                }
+            }
+            if (selectedMode == ShadeMode.BLOCKED) {
+                Text(
+                    text = "Blocked — notifications are cancelled and never reach the feed or shade",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = CrimsonError,
+                    modifier = Modifier.testTag("blocked_label_$tagPrefix")
                 )
             }
         } else {

@@ -11,6 +11,12 @@
         <package android:name="com.groupme.android" />
         <package android:name="com.teamsnap.teamsnap" />
         <package android:name="com.google.android.apps.messaging" />
+        <package android:name="com.twitter.android" />
+        <!-- Allow resolving launch intents for any app whose notification Nepho captured -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
     </queries>
 
     <application

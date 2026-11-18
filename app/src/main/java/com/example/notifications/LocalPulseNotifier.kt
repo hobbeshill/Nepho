@@ -167,6 +167,30 @@ object LocalPulseNotifier {
             secondaryIntents[label] = secPendingIntent
         }
 
+        val dismissIntent = Intent(context, PulseActionReceiver::class.java).apply {
+            action = PulseActionReceiver.ACTION_DISMISS
+            putExtra(PulseActionReceiver.EXTRA_KEY, key)
+            putExtra(PulseActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val dismissPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 10 + 4,
+            dismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val starIntent = Intent(context, PulseActionReceiver::class.java).apply {
+            action = PulseActionReceiver.ACTION_STAR
+            putExtra(PulseActionReceiver.EXTRA_KEY, key)
+            putExtra(PulseActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val starPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 10 + 5,
+            starIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         if (registerLocalFallbackHandle) {
             // Register real PendingIntent & RemoteInput handles in-memory keyed by notification key
             repository.registerNativeActionHandle(
@@ -191,6 +215,10 @@ object LocalPulseNotifier {
             .setAutoCancel(true)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
 
+        // Mirror the actions Nepho offers in-app: Reply, the source app's own actions,
+        // Dismiss, and Star. The shade renders at most 3 action buttons, so prioritize
+        // Reply and the app's native actions, then fill with Dismiss/Star.
+        var actionSlots = 3
         if (canReply) {
             val replyAction = NotificationCompat.Action.Builder(
                 android.R.drawable.ic_menu_send,
@@ -201,10 +229,20 @@ object LocalPulseNotifier {
                 .setAllowGeneratedReplies(true)
                 .build()
             builder.addAction(replyAction)
+            actionSlots--
         }
 
-        secondaryIntents.forEach { (label, pendingIntent) ->
+        secondaryIntents.entries.take((actionSlots - 1).coerceAtLeast(0)).forEach { (label, pendingIntent) ->
             builder.addAction(0, label, pendingIntent)
+            actionSlots--
+        }
+
+        if (actionSlots > 0) {
+            builder.addAction(0, context.getString(R.string.action_dismiss), dismissPendingIntent)
+            actionSlots--
+        }
+        if (actionSlots > 0) {
+            builder.addAction(0, context.getString(R.string.action_star_message), starPendingIntent)
         }
 
         try {
@@ -242,6 +280,15 @@ class PulseActionReceiver : BroadcastReceiver() {
                             NotificationManagerCompat.from(context).cancel(notificationId)
                         }
                     }
+                    ACTION_DISMISS -> {
+                        repository.dismissNotification(key)
+                        if (notificationId != -1) {
+                            NotificationManagerCompat.from(context).cancel(notificationId)
+                        }
+                    }
+                    ACTION_STAR -> {
+                        repository.toggleNotificationStar(key)
+                    }
                 }
             } finally {
                 pendingResult.finish()
@@ -252,6 +299,8 @@ class PulseActionReceiver : BroadcastReceiver() {
     companion object {
         const val ACTION_REPLY = "com.example.ACTION_PULSE_REPLY"
         const val ACTION_SECONDARY = "com.example.ACTION_PULSE_SECONDARY"
+        const val ACTION_DISMISS = "com.example.ACTION_PULSE_DISMISS"
+        const val ACTION_STAR = "com.example.ACTION_PULSE_STAR"
         const val EXTRA_KEY = "extra_pulse_key"
         const val EXTRA_NOTIFICATION_ID = "extra_pulse_notification_id"
         const val EXTRA_ACTION_LABEL = "extra_pulse_action_label"

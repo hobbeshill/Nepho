@@ -28,7 +28,7 @@ data class PulseNotificationEntity(
     val secondaryActionsJson: String = "[]",
     val repliesJson: String = "[]",
     val urlsJson: String = "[]",
-    val isSimulated: Boolean = false,
+    val imageUri: String? = null,
     val sourceChannel: String = "SHARE_SHEET",
     val isStarred: Boolean = false,
     val reminderAt: Long? = null,
@@ -63,16 +63,4 @@ data class ExtractedLinkEntity(
     val senderTitle: String,
     val postTime: Long,
     val isStarred: Boolean = false
-)
-
-@Entity(tableName = "digest_summaries")
-data class DigestSummaryEntity(
-    @PrimaryKey
-    val id: Int = 1,
-    val generatedAt: Long,
-    val mode: String,
-    val headline: String,
-    val appGroupsJson: String,
-    val actionItemsJson: String,
-    val messageCount: Int
 )

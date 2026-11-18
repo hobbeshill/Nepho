@@ -21,15 +21,11 @@ import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
-import androidx.compose.material.icons.filled.AutoAwesome
-import androidx.compose.material.icons.filled.DeleteSweep
 import androidx.compose.material.icons.filled.DynamicFeed
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.RestartAlt
-import androidx.compose.material.icons.outlined.AutoAwesome
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Tune
@@ -101,15 +97,16 @@ fun NephoApp(
     val hasLinksOnly by viewModel.hasLinksOnly.collectAsStateWithLifecycle()
     val starredOnly by viewModel.starredOnly.collectAsStateWithLifecycle()
     val notifications by viewModel.filteredNotifications.collectAsStateWithLifecycle()
+    val allNotifications by viewModel.allActiveNotifications.collectAsStateWithLifecycle()
     val links by viewModel.activeLinks.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
-    val digestState by viewModel.digestState.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by remember { mutableStateOf(false) }
     var showShadePrefsDialog by remember { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
+    var threadTargetId by remember { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     LaunchedEffect(Unit) {
@@ -140,6 +137,7 @@ fun NephoApp(
             onSetDefaultShadeMode = viewModel::setDefaultShadeMode,
             onSetAppOptedIn = viewModel::setAppOptedIn,
             onSetAppShadeMode = viewModel::setAppShadeMode,
+            onOpenSystemNotificationSettings = viewModel::openSystemNotificationSettings,
             onRequestNotificationPermission = onRequestNotificationPermission,
             onDismiss = { showShadePrefsDialog = false }
         )
@@ -155,6 +153,30 @@ fun NephoApp(
             onClearReminder = {
                 viewModel.clearReminder(target.key)
             }
+        )
+    }
+
+    val threadItems = remember(threadTargetId, allNotifications) {
+        threadTargetId?.let { id ->
+            allNotifications.filter { it.threadId == id }.sortedBy { it.postTime }
+        }.orEmpty()
+    }
+    // Auto-close the popup when the thread is dismissed/acted on (locally or synced from the source app)
+    LaunchedEffect(threadTargetId, threadItems.isEmpty()) {
+        if (threadTargetId != null && threadItems.isEmpty()) {
+            threadTargetId = null
+        }
+    }
+    if (threadItems.isNotEmpty()) {
+        ThreadPopupDialog(
+            threadItems = threadItems,
+            onDismissRequest = { threadTargetId = null },
+            onOpenApp = { item -> viewModel.openSourceApp(item.packageName, item.appLabel) },
+            onToggleStar = viewModel::toggleNotificationStar,
+            onOpenReminderDialog = { item -> reminderTargetItem = item },
+            onSendReply = viewModel::sendInlineReply,
+            onDismissThread = { keys -> keys.forEach { viewModel.dismissNotification(it) } },
+            onSecondaryAction = viewModel::executeSecondaryAction
         )
     }
 
@@ -240,11 +262,11 @@ fun NephoApp(
                                     onClick = { menuExpanded = true },
                                     modifier = Modifier
                                         .minimumInteractiveComponentSize()
-                                        .testTag("simulate_incoming_menu_button")
+                                        .testTag("overflow_menu_button")
                                 ) {
                                     Icon(
                                         imageVector = Icons.Default.MoreVert,
-                                        contentDescription = stringResource(R.string.action_simulate_incoming)
+                                        contentDescription = stringResource(R.string.action_more_options)
                                     )
                                 }
 
@@ -262,28 +284,6 @@ fun NephoApp(
                                             showShadePrefsDialog = true
                                         },
                                         modifier = Modifier.testTag("menu_shade_preferences")
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_simulate_batch)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.PlayArrow, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            menuExpanded = false
-                                            viewModel.simulateIncomingBatch(includeExpiredTest = false)
-                                        },
-                                        modifier = Modifier.testTag("menu_simulate_batch")
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_simulate_expiry)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.DeleteSweep, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            menuExpanded = false
-                                            viewModel.simulateIncomingBatch(includeExpiredTest = true)
-                                        },
-                                        modifier = Modifier.testTag("menu_simulate_expiry")
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_compose_capture)) },
@@ -329,15 +329,6 @@ fun NephoApp(
                             onClick = { viewModel.selectTab(PulseTab.FEED) }
                         )
                         PulseTabItem(
-                            selected = selectedTab == PulseTab.SMART_DIGEST,
-                            label = stringResource(R.string.tab_digest),
-                            badgeCount = 0,
-                            selectedIcon = Icons.Default.AutoAwesome,
-                            unselectedIcon = Icons.Outlined.AutoAwesome,
-                            testTag = "nav_tab_digest",
-                            onClick = { viewModel.selectTab(PulseTab.SMART_DIGEST) }
-                        )
-                        PulseTabItem(
                             selected = selectedTab == PulseTab.LINKS_VAULT,
                             label = stringResource(R.string.tab_vault),
                             badgeCount = metrics.totalLinks,
@@ -377,22 +368,6 @@ fun NephoApp(
                                 indicatorColor = CyanPulseContainer
                             ),
                             modifier = Modifier.testTag("rail_tab_feed")
-                        )
-                        NavigationRailItem(
-                            selected = selectedTab == PulseTab.SMART_DIGEST,
-                            onClick = { viewModel.selectTab(PulseTab.SMART_DIGEST) },
-                            icon = {
-                                Icon(
-                                    imageVector = if (selectedTab == PulseTab.SMART_DIGEST) Icons.Default.AutoAwesome else Icons.Outlined.AutoAwesome,
-                                    contentDescription = stringResource(R.string.tab_digest)
-                                )
-                            },
-                            label = { Text(stringResource(R.string.tab_digest)) },
-                            colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = CyanPulse,
-                                indicatorColor = CyanPulseContainer
-                            ),
-                            modifier = Modifier.testTag("rail_tab_digest")
                         )
                         NavigationRailItem(
                             selected = selectedTab == PulseTab.LINKS_VAULT,
@@ -447,24 +422,22 @@ fun NephoApp(
                                     onRequestNotificationPermission = onRequestNotificationPermission,
                                     onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
                                     onOpenShadePreferences = { showShadePrefsDialog = true },
-                                    onSimulateIncoming = { viewModel.simulateIncomingBatch(false) },
                                     onDismissBanner = viewModel::dismissBanner,
-                                    onMarkAsRead = viewModel::markAsRead,
+                                    onOpenThread = { item ->
+                                        threadTargetId = item.threadId
+                                        viewModel.markThreadAsRead(
+                                            allNotifications
+                                                .filter { it.threadId == item.threadId && !it.isRead }
+                                                .map { it.key }
+                                        )
+                                    },
+                                    onOpenApp = { item ->
+                                        viewModel.openSourceApp(item.packageName, item.appLabel)
+                                    },
                                     onToggleStar = viewModel::toggleNotificationStar,
                                     onOpenReminderDialog = { item -> reminderTargetItem = item },
-                                    onSendReply = viewModel::sendInlineReply,
                                     onDismissItem = viewModel::dismissNotification,
-                                    onSecondaryAction = viewModel::executeSecondaryAction,
                                     onOpenVaultTab = { viewModel.selectTab(PulseTab.LINKS_VAULT) }
-                                )
-                            }
-
-                            PulseTab.SMART_DIGEST -> {
-                                SmartDigestTab(
-                                    metrics = metrics,
-                                    digestState = digestState,
-                                    onGenerateAiSummary = viewModel::generateAiSummary,
-                                    onGenerateLocalFallback = viewModel::generateLocalFallbackSummary
                                 )
                             }
 
@@ -473,8 +446,7 @@ fun NephoApp(
                                     links = links,
                                     searchQuery = vaultSearchQuery,
                                     onSearchQueryChange = viewModel::updateVaultSearchQuery,
-                                    onToggleLinkStar = viewModel::toggleLinkStar,
-                                    onLinkCopied = viewModel::notifyLinkCopied
+                                    onToggleLinkStar = viewModel::toggleLinkStar
                                 )
                             }
                         }

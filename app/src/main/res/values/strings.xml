@@ -1,13 +1,10 @@
 <resources>
     <string name="app_name">Nepho</string>
     <string name="tab_feed">Feed</string>
-    <string name="tab_digest">Smart Digest</string>
     <string name="tab_vault">Links Vault</string>
     <string name="status_window_pill">Active since %1$s • 24h Rolling Window</string>
     <string name="action_reset_session">Reset Session</string>
-    <string name="action_simulate_incoming">Simulate Incoming</string>
-    <string name="action_simulate_batch">Simulate 5 App Alerts</string>
-    <string name="action_simulate_expiry">Simulate + Test 24h Purge</string>
+    <string name="action_more_options">More options</string>
     <string name="action_compose_capture">Add Custom Capture</string>
     <string name="listener_service_name">Nepho Notification Interceptor</string>
     <string name="banner_title">Eliminate Duplicate Notifications</string>
@@ -18,7 +15,6 @@
     <string name="banner_shade_prefs">App &amp; Shade Rules</string>
     <string name="banner_enable_alerts">Allow Shade Alerts</string>
     <string name="banner_alerts_enabled">Shade Alerts Allowed</string>
-    <string name="banner_try_simulate">Simulate Incoming</string>
     <string name="banner_dismiss">Got it</string>
     <string name="action_shade_preferences">App &amp; Shade Rules</string>
     <string name="shade_mode_silent">Silent (Feed Only)</string>
@@ -33,13 +29,6 @@
     <string name="action_dismiss">Dismiss</string>
     <string name="action_open_browser">Open in Browser</string>
     <string name="action_copy_link">Copy Link</string>
-    <string name="digest_generate_ai">Generate AI Summary</string>
-    <string name="digest_generate_local">Offline Rule-Based Digest</string>
-    <string name="digest_metric_total">In 24h Window</string>
-    <string name="digest_metric_unread">Unread Alerts</string>
-    <string name="digest_metric_links">Links Captured</string>
-    <string name="digest_empty_title">Ready to Summarize</string>
-    <string name="digest_empty_subtitle">Capture or simulate messages in your 24-hour session window, then tap Generate AI Summary to extract action items and app-by-app highlights.</string>
     <string name="feed_empty_title">No Active Session Alerts</string>
     <string name="feed_empty_subtitle">Only notifications arriving after %1$s (and under 24 hours old) appear here. Incoming alerts from all apps are captured automatically once Notification Access is granted.</string>
     <string name="vault_empty_title">Links Vault is Empty</string>
@@ -53,4 +42,9 @@
     <string name="action_star_message">Star message</string>
     <string name="action_unstar_message">Unstar message</string>
     <string name="badge_starred_protected">STARRED • NEVER PURGED</string>
+    <string name="action_open_app">Open %1$s</string>
+    <string name="thread_close">Close thread</string>
+    <string name="thread_dismiss_all">Dismiss Thread</string>
+    <string name="card_thread_hint">Tap to expand thread</string>
+    <string name="card_thread_hint_with_replies">Tap to expand thread • %1$d reply(ies) sent</string>
 </resources>

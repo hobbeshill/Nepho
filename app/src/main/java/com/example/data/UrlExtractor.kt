@@ -62,4 +62,20 @@ object UrlExtractor {
             .digest(normalizedUrl.toByteArray(Charsets.UTF_8))
         return digest.take(16).joinToString("") { "%02x".format(it) }
     }
+
+    private val imageExtensions = setOf("png", "jpg", "jpeg", "gif", "webp", "bmp")
+    private val imageHosts = setOf("media.giphy.com", "i.giphy.com", "media.tenor.com", "c.tenor.com", "i.imgur.com")
+
+    /** True when a URL points at a directly renderable image or GIF. */
+    fun isImageUrl(url: String): Boolean {
+        return try {
+            val uri = Uri.parse(url)
+            val host = uri.host?.lowercase().orEmpty()
+            val path = uri.path?.lowercase().orEmpty()
+            val extension = path.substringAfterLast('.', missingDelimiterValue = "")
+            extension in imageExtensions || host in imageHosts
+        } catch (_: Exception) {
+            false
+        }
+    }
 }

@@ -1,6 +1,5 @@
 package com.example.ui
 
-import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -13,7 +12,6 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -23,15 +21,14 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Reply
-import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AlarmOn
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.PlayArrow
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AlarmAdd
@@ -47,7 +44,6 @@ import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
-import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
@@ -56,14 +52,10 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
-import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
@@ -109,18 +101,17 @@ fun FeedTab(
     onRequestNotificationPermission: () -> Unit,
     onOpenNotificationAccessSettings: () -> Unit,
     onOpenShadePreferences: () -> Unit,
-    onSimulateIncoming: () -> Unit,
     onDismissBanner: () -> Unit,
-    onMarkAsRead: (String) -> Unit,
+    onOpenThread: (PulseNotificationItem) -> Unit,
+    onOpenApp: (PulseNotificationItem) -> Unit,
     onToggleStar: (String) -> Unit,
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
-    onSendReply: (String, String) -> Unit,
     onDismissItem: (String) -> Unit,
-    onSecondaryAction: (String, String) -> Unit,
     onOpenVaultTab: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+    val collapsedGroups = remember { mutableStateMapOf<String, Boolean>() }
 
     LazyColumn(
         modifier = modifier
@@ -137,7 +128,6 @@ fun FeedTab(
                     onGrantNotificationAccess = onOpenNotificationAccessSettings,
                     onOpenShadePreferences = onOpenShadePreferences,
                     onEnableLocalAlerts = onRequestNotificationPermission,
-                    onSimulateIncoming = onSimulateIncoming,
                     onDismiss = onDismissBanner
                 )
             }
@@ -286,25 +276,42 @@ fun FeedTab(
         if (notifications.isEmpty()) {
             item(key = "empty_feed") {
                 EmptyFeedCard(
-                    sessionSince = timeFormatter.format(Date(sessionOpenedAt)),
-                    onSimulateIncoming = onSimulateIncoming
+                    sessionSince = timeFormatter.format(Date(sessionOpenedAt))
                 )
             }
         } else {
-            items(items = notifications, key = { it.key }) { item ->
-                NotificationFeedCard(
-                    item = item,
-                    timeText = timeFormatter.format(Date(item.postTime)),
-                    onCardExpand = {
-                        if (!item.isRead) onMarkAsRead(item.key)
-                    },
-                    onToggleStar = { onToggleStar(item.key) },
-                    onOpenReminderDialog = { onOpenReminderDialog(item) },
-                    onSendReply = { replyText -> onSendReply(item.key, replyText) },
-                    onDismiss = { onDismissItem(item.key) },
-                    onSecondaryAction = { actionLabel -> onSecondaryAction(item.key, actionLabel) },
-                    onOpenVaultTab = onOpenVaultTab
-                )
+            // Group all notifications from the same app together, newest group first
+            val appGroups = notifications
+                .groupBy { it.packageName }
+                .entries
+                .sortedByDescending { entry -> entry.value.maxOf { it.postTime } }
+
+            appGroups.forEach { (packageName, groupItems) ->
+                val isCollapsed = collapsedGroups[packageName] == true
+                item(key = "app_group_$packageName") {
+                    AppGroupHeader(
+                        representative = groupItems.first(),
+                        totalCount = groupItems.size,
+                        unreadCount = groupItems.count { !it.isRead },
+                        collapsed = isCollapsed,
+                        onToggleCollapsed = { collapsedGroups[packageName] = !isCollapsed },
+                        onOpenApp = { onOpenApp(groupItems.first()) }
+                    )
+                }
+                if (!isCollapsed) {
+                    items(items = groupItems, key = { it.key }) { item ->
+                        NotificationFeedCard(
+                            item = item,
+                            timeText = timeFormatter.format(Date(item.postTime)),
+                            onOpenThread = { onOpenThread(item) },
+                            onOpenApp = { onOpenApp(item) },
+                            onToggleStar = { onToggleStar(item.key) },
+                            onOpenReminderDialog = { onOpenReminderDialog(item) },
+                            onDismiss = { onDismissItem(item.key) },
+                            onOpenVaultTab = onOpenVaultTab
+                        )
+                    }
+                }
             }
         }
     }
@@ -317,7 +324,6 @@ private fun OnboardingIntakeBanner(
     onGrantNotificationAccess: () -> Unit,
     onOpenShadePreferences: () -> Unit,
     onEnableLocalAlerts: () -> Unit,
-    onSimulateIncoming: () -> Unit,
     onDismiss: () -> Unit
 ) {
     val accent = if (isNotificationAccessGranted) EmeraldOk else CyanPulse
@@ -461,26 +467,6 @@ private fun OnboardingIntakeBanner(
                                 overflow = TextOverflow.Ellipsis
                             )
                         }
-                    } else {
-                        OutlinedButton(
-                            onClick = onSimulateIncoming,
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("banner_simulate_button"),
-                            border = BorderStroke(1.dp, BorderHairline)
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.PlayArrow,
-                                contentDescription = null,
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = stringResource(R.string.banner_try_simulate),
-                                maxLines = 1,
-                                overflow = TextOverflow.Ellipsis
-                            )
-                        }
                     }
                 }
             }
@@ -489,31 +475,110 @@ private fun OnboardingIntakeBanner(
 }
 
 @Composable
+private fun AppGroupHeader(
+    representative: PulseNotificationItem,
+    totalCount: Int,
+    unreadCount: Int,
+    collapsed: Boolean,
+    onToggleCollapsed: () -> Unit,
+    onOpenApp: () -> Unit
+) {
+    val app = representative.supportedApp
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("app_group_header_${representative.packageName}")
+            .clip(RoundedCornerShape(14.dp))
+            .clickable { onToggleCollapsed() },
+        shape = RoundedCornerShape(14.dp),
+        color = HighSurface,
+        border = BorderStroke(1.dp, app.accentColor.copy(alpha = 0.35f))
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.SpaceBetween
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
+                modifier = Modifier.weight(1f)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(30.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(app.accentColor.copy(alpha = 0.18f)),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = app.shortBadge,
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = app.accentColor
+                    )
+                }
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(4.dp),
+                        modifier = Modifier
+                            .clip(RoundedCornerShape(6.dp))
+                            .clickable { onOpenApp() }
+                            .testTag("open_app_${representative.packageName}")
+                    ) {
+                        Text(
+                            text = representative.appLabel,
+                            style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
+                            color = app.accentColor
+                        )
+                        Icon(
+                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                            contentDescription = stringResource(R.string.action_open_app, representative.appLabel),
+                            tint = app.accentColor,
+                            modifier = Modifier.size(13.dp)
+                        )
+                    }
+                    Text(
+                        text = if (unreadCount > 0) {
+                            "$totalCount alert${if (totalCount > 1) "s" else ""} • $unreadCount unread"
+                        } else {
+                            "$totalCount alert${if (totalCount > 1) "s" else ""}"
+                        },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+            Icon(
+                imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                contentDescription = if (collapsed) "Expand ${representative.appLabel} group" else "Collapse ${representative.appLabel} group",
+                tint = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+    }
+}
+
+@Composable
 private fun NotificationFeedCard(
     item: PulseNotificationItem,
     timeText: String,
-    onCardExpand: () -> Unit,
+    onOpenThread: () -> Unit,
+    onOpenApp: () -> Unit,
     onToggleStar: () -> Unit,
     onOpenReminderDialog: () -> Unit,
-    onSendReply: (String) -> Unit,
     onDismiss: () -> Unit,
-    onSecondaryAction: (String) -> Unit,
     onOpenVaultTab: () -> Unit
 ) {
-    var expanded by rememberSaveable(item.key) { mutableStateOf(true) }
-    var replyDraft by rememberSaveable(item.key) { mutableStateOf("") }
     val app = item.supportedApp
-    val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val reminderFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
             .testTag("notification_card_${item.key}")
-            .clickable {
-                expanded = !expanded
-                onCardExpand()
-            },
+            .clickable { onOpenThread() },
         shape = RoundedCornerShape(16.dp),
         border = BorderStroke(
             width = 1.dp,
@@ -531,72 +596,43 @@ private fun NotificationFeedCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(10.dp)
+            verticalArrangement = Arrangement.spacedBy(8.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.SpaceBetween
             ) {
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                    modifier = Modifier.weight(1f)
-                ) {
-                    Box(
-                        modifier = Modifier
-                            .size(36.dp)
-                            .clip(RoundedCornerShape(10.dp))
-                            .background(app.accentColor.copy(alpha = 0.16f)),
-                        contentAlignment = Alignment.Center
+                Column(modifier = Modifier.weight(1f)) {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
                     ) {
                         Text(
-                            text = app.shortBadge,
-                            style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                            color = app.accentColor
+                            text = item.appLabel,
+                            style = MaterialTheme.typography.labelMedium,
+                            color = app.accentColor,
+                            modifier = Modifier
+                                .clip(RoundedCornerShape(6.dp))
+                                .clickable { onOpenApp() }
+                                .testTag("card_open_app_${item.key}")
                         )
-                    }
-
-                    Column(modifier = Modifier.weight(1f)) {
-                        Row(
-                            verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
-                        ) {
-                            Text(
-                                text = item.appLabel,
-                                style = MaterialTheme.typography.labelMedium,
-                                color = app.accentColor
+                        if (!item.isRead) {
+                            Box(
+                                modifier = Modifier
+                                    .size(7.dp)
+                                    .clip(CircleShape)
+                                    .background(CyanPulse)
                             )
-                            if (!item.isRead) {
-                                Box(
-                                    modifier = Modifier
-                                        .size(7.dp)
-                                        .clip(CircleShape)
-                                        .background(CyanPulse)
-                                )
-                            }
-                            if (item.isSimulated) {
-                                Surface(
-                                    shape = RoundedCornerShape(6.dp),
-                                    color = HighSurface
-                                ) {
-                                    Text(
-                                        text = "SIM",
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                                        modifier = Modifier.padding(horizontal = 5.dp, vertical = 1.dp)
-                                    )
-                                }
-                            }
                         }
-                        Text(
-                            text = item.title,
-                            style = MaterialTheme.typography.titleMedium,
-                            color = MaterialTheme.colorScheme.onSurface,
-                            maxLines = if (expanded) 2 else 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
                     }
+                    Text(
+                        text = item.title,
+                        style = MaterialTheme.typography.titleMedium,
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
@@ -628,16 +664,22 @@ private fun NotificationFeedCard(
                             tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
+                    IconButton(
+                        onClick = onDismiss,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("dismiss_button_${item.key}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Close,
+                            contentDescription = stringResource(R.string.action_dismiss),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                     Text(
                         text = timeText,
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                    Icon(
-                        imageVector = if (expanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
-                        contentDescription = if (expanded) "Collapse alert" else "Expand alert",
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(start = 2.dp)
                     )
                 }
             }
@@ -713,9 +755,21 @@ private fun NotificationFeedCard(
                 text = item.body,
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = if (expanded) Int.MAX_VALUE else 2,
+                maxLines = 3,
                 overflow = TextOverflow.Ellipsis
             )
+
+            val mediaPreview = item.imageUri ?: item.imageUrls.firstOrNull()
+            if (mediaPreview != null) {
+                NotificationMediaImage(
+                    source = mediaPreview,
+                    contentDescription = "Image from ${item.appLabel}",
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("card_media_${item.key}"),
+                    maxHeight = 180.dp
+                )
+            }
 
             if (item.urls.isNotEmpty()) {
                 AssistChip(
@@ -742,162 +796,25 @@ private fun NotificationFeedCard(
                 )
             }
 
-            AnimatedVisibility(visible = expanded) {
-                Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                    if (item.replies.isNotEmpty()) {
-                        HorizontalDivider(color = BorderHairline)
-                        Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
-                            item.replies.forEach { reply ->
-                                Surface(
-                                    shape = RoundedCornerShape(10.dp),
-                                    color = HighSurface
-                                ) {
-                                    Row(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
-                                    ) {
-                                        Row(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
-                                        ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.Reply,
-                                                contentDescription = null,
-                                                tint = EmeraldOk,
-                                                modifier = Modifier.size(14.dp)
-                                            )
-                                            Text(
-                                                text = "You: ${reply.text}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurface
-                                            )
-                                        }
-                                        Text(
-                                            text = timeFormatter.format(Date(reply.sentAt)),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = EmeraldOk
-                                        )
-                                    }
-                                }
-                            }
-                        }
-                    }
-
-                    if (item.canReply) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(8.dp),
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            OutlinedTextField(
-                                value = replyDraft,
-                                onValueChange = { replyDraft = it },
-                                modifier = Modifier
-                                    .weight(1f)
-                                    .testTag("reply_input_${item.key}"),
-                                placeholder = {
-                                    Text(
-                                        text = stringResource(R.string.reply_placeholder),
-                                        style = MaterialTheme.typography.bodySmall
-                                    )
-                                },
-                                singleLine = true,
-                                shape = RoundedCornerShape(12.dp),
-                                colors = OutlinedTextFieldDefaults.colors(
-                                    focusedContainerColor = MidnightSurface,
-                                    unfocusedContainerColor = MidnightSurface,
-                                    focusedBorderColor = CyanPulse,
-                                    unfocusedBorderColor = BorderHairline
-                                )
-                            )
-
-                            Button(
-                                onClick = {
-                                    if (replyDraft.isNotBlank()) {
-                                        onSendReply(replyDraft)
-                                        replyDraft = ""
-                                    }
-                                },
-                                enabled = replyDraft.isNotBlank(),
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("send_reply_button_${item.key}"),
-                                contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.AutoMirrored.Filled.Send,
-                                    contentDescription = stringResource(R.string.action_send),
-                                    modifier = Modifier.size(16.dp)
-                                )
-                                Spacer(Modifier.width(4.dp))
-                                Text(stringResource(R.string.action_send))
-                            }
-                        }
-                    }
-
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .horizontalScroll(rememberScrollState()),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedButton(
-                            onClick = onOpenReminderDialog,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("remind_chip_${item.key}"),
-                            border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.45f)),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Icon(
-                                imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
-                                contentDescription = null,
-                                tint = CyanPulse,
-                                modifier = Modifier.size(15.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(
-                                text = if (item.reminderAt != null) "Edit Reminder" else "Remind",
-                                style = MaterialTheme.typography.labelMedium,
-                                color = CyanPulse
-                            )
-                        }
-
-                        OutlinedButton(
-                            onClick = onDismiss,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("dismiss_button_${item.key}"),
-                            border = BorderStroke(1.dp, BorderHairline),
-                            contentPadding = PaddingValues(horizontal = 12.dp, vertical = 6.dp)
-                        ) {
-                            Text(
-                                text = stringResource(R.string.action_dismiss),
-                                style = MaterialTheme.typography.labelMedium
-                            )
-                        }
-
-                        item.secondaryActions.forEach { actionLabel ->
-                            TextButton(
-                                onClick = { onSecondaryAction(actionLabel) },
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("secondary_action_${item.key}_$actionLabel")
-                            ) {
-                                Text(
-                                    text = actionLabel,
-                                    style = MaterialTheme.typography.labelMedium,
-                                    color = CyanPulse
-                                )
-                            }
-                        }
-                    }
-                }
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp)
+            ) {
+                Icon(
+                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.size(13.dp)
+                )
+                Text(
+                    text = if (item.replies.isNotEmpty()) {
+                        stringResource(R.string.card_thread_hint_with_replies, item.replies.size)
+                    } else {
+                        stringResource(R.string.card_thread_hint)
+                    },
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant
+                )
             }
         }
     }
@@ -905,8 +822,7 @@ private fun NotificationFeedCard(
 
 @Composable
 private fun EmptyFeedCard(
-    sessionSince: String,
-    onSimulateIncoming: () -> Unit
+    sessionSince: String
 ) {
     Card(
         modifier = Modifier
@@ -946,19 +862,6 @@ private fun EmptyFeedCard(
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.onSurfaceVariant
             )
-            Spacer(Modifier.height(4.dp))
-            Button(
-                onClick = onSimulateIncoming,
-                modifier = Modifier.testTag("empty_feed_simulate_button")
-            ) {
-                Icon(
-                    imageVector = Icons.Default.PlayArrow,
-                    contentDescription = null,
-                    modifier = Modifier.size(18.dp)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(stringResource(R.string.action_simulate_batch))
-            }
         }
     }
 }

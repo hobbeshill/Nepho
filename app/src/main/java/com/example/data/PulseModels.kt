@@ -22,7 +22,7 @@ data class PulseNotificationItem(
     val secondaryActions: List<String>,
     val replies: List<ReplyEntry>,
     val urls: List<String>,
-    val isSimulated: Boolean,
+    val imageUri: String? = null,
     val sourceChannel: String,
     val isStarred: Boolean = false,
     val reminderAt: Long? = null,
@@ -30,6 +30,14 @@ data class PulseNotificationItem(
 ) {
     val supportedApp: SupportedApp
         get() = SupportedApp.fromPackageName(packageName)
+
+    /** Conversation identity: all notifications from the same app with the same title form a thread. */
+    val threadId: String
+        get() = "$packageName|${title.trim().lowercase()}"
+
+    /** URLs in the message body that point at directly renderable images or GIFs. */
+    val imageUrls: List<String>
+        get() = urls.filter { UrlExtractor.isImageUrl(it) }
 }
 
 data class ExtractedLinkItem(
@@ -48,32 +56,6 @@ data class ExtractedLinkItem(
         get() = SupportedApp.fromPackageName(packageName)
 }
 
-enum class DigestMode {
-    GEMINI_AI,
-    LOCAL_FALLBACK
-}
-
-data class DigestAppGroup(
-    val appName: String,
-    val bulletPoints: List<String>
-)
-
-data class DigestActionItem(
-    val priority: String,
-    val appName: String,
-    val sender: String,
-    val summary: String
-)
-
-data class DigestResult(
-    val generatedAt: Long,
-    val mode: DigestMode,
-    val headline: String,
-    val appGroups: List<DigestAppGroup>,
-    val actionItems: List<DigestActionItem>,
-    val messageCount: Int
-)
-
 data class SessionMetrics(
     val totalInWindow: Int = 0,
     val unreadTotal: Int = 0,
@@ -82,8 +64,14 @@ data class SessionMetrics(
 )
 
 enum class ShadeMode {
+    /** Silenced: captured into the Nepho feed only; no alert anywhere. */
     SILENT,
-    NEPHO_ALERT
+
+    /** Allowed: captured and re-surfaced as a single Nepho shade alert. */
+    NEPHO_ALERT,
+
+    /** Not allowed: original notification is cancelled and nothing is captured. */
+    BLOCKED
 }
 
 data class AppShadePreference(
@@ -133,70 +121,6 @@ object PulseJsonCodec {
                 ReplyEntry(
                     text = obj.getString("text"),
                     sentAt = obj.getLong("sentAt")
-                )
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    fun encodeAppGroups(groups: List<DigestAppGroup>): String {
-        val array = JSONArray()
-        groups.forEach { group ->
-            array.put(
-                JSONObject().apply {
-                    put("appName", group.appName)
-                    put("bulletPoints", JSONArray(group.bulletPoints))
-                }
-            )
-        }
-        return array.toString()
-    }
-
-    fun decodeAppGroups(raw: String): List<DigestAppGroup> {
-        if (raw.isBlank()) return emptyList()
-        return try {
-            val array = JSONArray(raw)
-            (0 until array.length()).map { idx ->
-                val obj = array.getJSONObject(idx)
-                val bulletsJson = obj.getJSONArray("bulletPoints")
-                val bullets = (0 until bulletsJson.length()).map { bulletsJson.getString(it) }
-                DigestAppGroup(
-                    appName = obj.getString("appName"),
-                    bulletPoints = bullets
-                )
-            }
-        } catch (_: Exception) {
-            emptyList()
-        }
-    }
-
-    fun encodeActionItems(items: List<DigestActionItem>): String {
-        val array = JSONArray()
-        items.forEach { item ->
-            array.put(
-                JSONObject().apply {
-                    put("priority", item.priority)
-                    put("appName", item.appName)
-                    put("sender", item.sender)
-                    put("summary", item.summary)
-                }
-            )
-        }
-        return array.toString()
-    }
-
-    fun decodeActionItems(raw: String): List<DigestActionItem> {
-        if (raw.isBlank()) return emptyList()
-        return try {
-            val array = JSONArray(raw)
-            (0 until array.length()).map { idx ->
-                val obj = array.getJSONObject(idx)
-                DigestActionItem(
-                    priority = obj.optString("priority", "Normal"),
-                    appName = obj.optString("appName", "App"),
-                    sender = obj.optString("sender", ""),
-                    summary = obj.optString("summary", "")
                 )
             }
         } catch (_: Exception) {

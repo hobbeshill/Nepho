@@ -7,6 +7,7 @@ import com.example.ui.theme.MessagesEmerald
 import com.example.ui.theme.OtherSlate
 import com.example.ui.theme.OutlookBlue
 import com.example.ui.theme.TeamSnapOrange
+import com.example.ui.theme.TwitterSky
 
 enum class SupportedApp(
     val packageName: String,
@@ -44,6 +45,12 @@ enum class SupportedApp(
         shortBadge = "SM",
         accentColor = MessagesEmerald
     ),
+    TWITTER(
+        packageName = "com.twitter.android",
+        displayName = "X (Twitter)",
+        shortBadge = "X",
+        accentColor = TwitterSky
+    ),
     OTHER(
         packageName = "com.example.shared",
         displayName = "Shared",
@@ -52,7 +59,7 @@ enum class SupportedApp(
     );
 
     companion object {
-        val filterableApps = listOf(OUTLOOK, GMAIL, GROUPME, TEAMSNAP, MESSAGES)
+        val filterableApps = listOf(OUTLOOK, GMAIL, GROUPME, TEAMSNAP, MESSAGES, TWITTER)
 
         fun fromPackageName(packageName: String): SupportedApp =
             entries.firstOrNull { it.packageName == packageName } ?: OTHER
@@ -64,6 +71,7 @@ enum class SupportedApp(
                 "groupme" in combined -> GROUPME
                 "outlook" in combined || "office365" in combined || "teams.microsoft" in combined -> OUTLOOK
                 "gmail" in combined || "mail.google" in combined -> GMAIL
+                "twitter" in combined || "x.com" in combined || "tweet" in combined -> TWITTER
                 "sms:" in combined || "text message" in combined -> MESSAGES
                 else -> OTHER
             }

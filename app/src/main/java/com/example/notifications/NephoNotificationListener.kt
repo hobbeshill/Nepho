@@ -7,6 +7,7 @@ import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationManagerCompat
 import com.example.data.NativeReplyHandle
+import com.example.data.NotificationImageStore
 import com.example.data.PulseRepository
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
@@ -83,6 +84,9 @@ class NephoNotificationListener : NotificationListenerService() {
         val canReply = replyPendingIntent != null && !replyRemoteInputs.isNullOrEmpty()
         val localNotificationId = (sbn.key.hashCode() and 0x7FFFFFFF).coerceAtLeast(1000)
 
+        // Capture any attached picture (BigPictureStyle) before the original notification is cancelled
+        val attachedPicture = extras?.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
+
         serviceScope.launch {
             val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
             if (sbn.postTime < sessionOpenedAt) return@launch
@@ -91,6 +95,18 @@ class NephoNotificationListener : NotificationListenerService() {
 
             // Leave opted-out apps completely untouched so their original notifications remain in the shade
             if (!repository.isAppOptedIn(sbn.packageName)) return@launch
+
+            val shadeMode = repository.sessionPreferences.getEffectiveShadeMode(sbn.packageName)
+
+            // Blocked apps: cancel the original notification and capture nothing
+            if (shadeMode == ShadeMode.BLOCKED) {
+                try {
+                    cancelNotification(sbn.key)
+                } catch (_: Exception) {
+                    // Listener may have disconnected concurrently
+                }
+                return@launch
+            }
 
             if (canReply || secondaryActionIntents.isNotEmpty()) {
                 repository.registerNativeActionHandle(
@@ -114,8 +130,10 @@ class NephoNotificationListener : NotificationListenerService() {
                 postTime = sbn.postTime,
                 canReply = canReply,
                 secondaryActions = secondaryLabels,
-                isSimulated = false,
-                sourceChannel = "LISTENER"
+                sourceChannel = "LISTENER",
+                imageUri = attachedPicture?.let {
+                    NotificationImageStore.save(applicationContext, sbn.key, it)
+                }
             )
 
             // Suppress the original app notification so only Nepho surfaces it
@@ -126,7 +144,6 @@ class NephoNotificationListener : NotificationListenerService() {
             }
 
             // Route to Nepho shade only if this app is configured for NEPHO_ALERT
-            val shadeMode = repository.sessionPreferences.getEffectiveShadeMode(sbn.packageName)
             if (shadeMode == ShadeMode.NEPHO_ALERT) {
                 LocalPulseNotifier.postInteractiveLocalNotification(
                     context = applicationContext,
@@ -141,6 +158,25 @@ class NephoNotificationListener : NotificationListenerService() {
                     registerLocalFallbackHandle = false
                 )
             }
+        }
+    }
+
+    override fun onNotificationRemoved(
+        sbn: StatusBarNotification?,
+        rankingMap: RankingMap?,
+        reason: Int
+    ) {
+        super.onNotificationRemoved(sbn, rankingMap, reason)
+        if (sbn == null) return
+        if (sbn.packageName == applicationContext.packageName) return
+        // Only mirror removals initiated by the user or the source app (e.g. the message
+        // was read, replied to, or cleared inside the real app). Skip our own
+        // cancelNotification() calls and system housekeeping removals.
+        if (reason !in SYNCABLE_REMOVAL_REASONS) return
+
+        val repository = PulseRepository.getInstance(applicationContext)
+        serviceScope.launch {
+            repository.syncDismissalFromSystem(sbn.key)
         }
     }
 
@@ -178,6 +214,14 @@ class NephoNotificationListener : NotificationListenerService() {
         @Volatile
         private var activeInstance: WeakReference<NephoNotificationListener>? = null
 
+        private val SYNCABLE_REMOVAL_REASONS = setOf(
+            REASON_CLICK,
+            REASON_CANCEL,
+            REASON_CANCEL_ALL,
+            REASON_APP_CANCEL,
+            REASON_APP_CANCEL_ALL
+        )
+
         fun isListenerEnabled(context: Context): Boolean {
             return NotificationManagerCompat.getEnabledListenerPackages(context)
                 .contains(context.packageName)
@@ -186,6 +230,18 @@ class NephoNotificationListener : NotificationListenerService() {
         fun cancelSystemNotification(key: String) {
             try {
                 activeInstance?.get()?.cancelNotification(key)
+            } catch (_: Exception) {
+                // Ignore if listener is not actively bound
+            }
+        }
+
+        /** Clears every active system notification posted by [packageName] (used when an app is blocked). */
+        fun cancelActiveNotificationsForPackage(packageName: String) {
+            val listener = activeInstance?.get() ?: return
+            try {
+                listener.activeNotifications
+                    ?.filter { it.packageName == packageName }
+                    ?.forEach { listener.cancelNotification(it.key) }
             } catch (_: Exception) {
                 // Ignore if listener is not actively bound
             }

@@ -6,7 +6,6 @@ import android.content.Intent
 import android.os.Bundle
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
-import com.example.data.local.DigestSummaryEntity
 import com.example.data.local.ExtractedLinkEntity
 import com.example.data.local.PulseDao
 import com.example.data.local.PulseDatabase
@@ -70,16 +69,6 @@ class PulseRepository private constructor(
         }
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val latestDigestFlow: Flow<DigestResult?> = combine(
-        retentionCutoffTicker,
-        sessionPreferences.sessionOpenedAtFlow
-    ) { rollingCutoff, sessionOpenedAt ->
-        maxOf(rollingCutoff, sessionOpenedAt)
-    }.flatMapLatest { effectiveCutoff ->
-        dao.observeLatestDigest(effectiveCutoff).map { it?.toDomain() }
-    }
-
     suspend fun initializeSession(): Long {
         val openedAt = sessionPreferences.ensureSessionOpenedAt()
         purgeExpired()
@@ -98,15 +87,9 @@ class PulseRepository private constructor(
                     actionHandleMap.remove(key)
                 }
             }
+            NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
         }
         return removed
-    }
-
-    suspend fun getSnapshotInWindow(): List<PulseNotificationItem> {
-        val rollingCutoff = computeRetentionCutoff()
-        val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
-        val effectiveCutoff = maxOf(rollingCutoff, sessionOpenedAt)
-        return dao.getActiveNotificationsSnapshot(effectiveCutoff).map { it.toDomain() }
     }
 
     suspend fun ingestNotification(
@@ -119,8 +102,8 @@ class PulseRepository private constructor(
         postTime: Long,
         canReply: Boolean,
         secondaryActions: List<String>,
-        isSimulated: Boolean,
-        sourceChannel: String
+        sourceChannel: String,
+        imageUri: String? = null
     ): IngestResult {
         val parsedUrls = UrlExtractor.extractUrls(title, body)
         val urlStrings = parsedUrls.map { it.url }
@@ -139,7 +122,7 @@ class PulseRepository private constructor(
             secondaryActionsJson = PulseJsonCodec.encodeStringList(secondaryActions),
             repliesJson = "[]",
             urlsJson = PulseJsonCodec.encodeStringList(urlStrings),
-            isSimulated = isSimulated,
+            imageUri = imageUri,
             sourceChannel = sourceChannel
         )
 
@@ -254,6 +237,8 @@ class PulseRepository private constructor(
         val currentReplies = PulseJsonCodec.decodeReplies(existing.repliesJson).toMutableList()
         currentReplies.add(ReplyEntry(text = trimmed, sentAt = System.currentTimeMillis()))
         dao.updateReplies(key, PulseJsonCodec.encodeReplies(currentReplies))
+        // Responding completes the alert: clear it from the feed and the shade
+        dismissNotification(key)
         return true
     }
 
@@ -287,30 +272,26 @@ class PulseRepository private constructor(
                 // Ignore if cancelled
             }
         }
-        when (actionLabel.lowercase()) {
-            "archive", "delete" -> dismissNotification(key)
-            else -> markAsRead(key)
-        }
+        // Acting on an alert completes it: clear it from the feed and the shade
+        dismissNotification(key)
     }
 
-    suspend fun saveDigestResult(result: DigestResult) {
-        dao.saveDigest(
-            DigestSummaryEntity(
-                id = 1,
-                generatedAt = result.generatedAt,
-                mode = result.mode.name,
-                headline = result.headline,
-                appGroupsJson = PulseJsonCodec.encodeAppGroups(result.appGroups),
-                actionItemsJson = PulseJsonCodec.encodeActionItems(result.actionItems),
-                messageCount = result.messageCount
-            )
-        )
+    /**
+     * Mirrors a removal that happened outside Nepho (user or source app cleared the
+     * original notification) into the Nepho feed and shade.
+     */
+    suspend fun syncDismissalFromSystem(key: String): Boolean {
+        val existing = dao.getByKey(key) ?: return false
+        if (existing.isDismissed) return false
+        dismissNotification(key)
+        return true
     }
 
     suspend fun resetSession(): Long {
         NotificationManagerCompat.from(appContext).cancelAll()
         actionHandleMap.clear()
         dao.clearUnstarredSessionData()
+        NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
         val now = sessionPreferences.resetSessionOpenedAt()
         retentionCutoffTicker.value = now - RETENTION_WINDOW_MS
         return now
@@ -358,7 +339,7 @@ private fun PulseNotificationEntity.toDomain(): PulseNotificationItem =
         secondaryActions = PulseJsonCodec.decodeStringList(secondaryActionsJson),
         replies = PulseJsonCodec.decodeReplies(repliesJson),
         urls = PulseJsonCodec.decodeStringList(urlsJson),
-        isSimulated = isSimulated,
+        imageUri = imageUri,
         sourceChannel = sourceChannel,
         isStarred = isStarred,
         reminderAt = reminderAt,
@@ -377,14 +358,4 @@ private fun ExtractedLinkEntity.toDomain(): ExtractedLinkItem =
         senderTitle = senderTitle,
         postTime = postTime,
         isStarred = isStarred
-    )
-
-private fun DigestSummaryEntity.toDomain(): DigestResult =
-    DigestResult(
-        generatedAt = generatedAt,
-        mode = runCatching { DigestMode.valueOf(mode) }.getOrDefault(DigestMode.LOCAL_FALLBACK),
-        headline = headline,
-        appGroups = PulseJsonCodec.decodeAppGroups(appGroupsJson),
-        actionItems = PulseJsonCodec.decodeActionItems(actionItemsJson),
-        messageCount = messageCount
     )
