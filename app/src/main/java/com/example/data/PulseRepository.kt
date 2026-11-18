@@ -1,0 +1,312 @@
+package com.example.data
+
+import android.app.PendingIntent
+import android.content.Context
+import android.content.Intent
+import android.os.Bundle
+import androidx.core.app.NotificationManagerCompat
+import androidx.core.app.RemoteInput
+import com.example.data.local.DigestSummaryEntity
+import com.example.data.local.ExtractedLinkEntity
+import com.example.data.local.PulseDao
+import com.example.data.local.PulseDatabase
+import com.example.data.local.PulseNotificationEntity
+import com.example.data.local.SessionPreferences
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.flatMapLatest
+import kotlinx.coroutines.flow.map
+import java.util.concurrent.ConcurrentHashMap
+
+data class NativeReplyHandle(
+    val replyPendingIntent: PendingIntent,
+    val remoteInput: RemoteInput,
+    val secondaryActionIntents: Map<String, PendingIntent> = emptyMap()
+)
+
+class PulseRepository private constructor(
+    private val appContext: Context,
+    private val dao: PulseDao,
+    val sessionPreferences: SessionPreferences
+) {
+    private val actionHandleMap = ConcurrentHashMap<String, NativeReplyHandle>()
+    private val retentionCutoffTicker = MutableStateFlow(computeRetentionCutoff())
+
+    fun registerNativeActionHandle(key: String, handle: NativeReplyHandle) {
+        actionHandleMap[key] = handle
+    }
+
+    fun refreshRetentionTicker() {
+        retentionCutoffTicker.value = computeRetentionCutoff()
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeNotificationsFlow: Flow<List<PulseNotificationItem>> = combine(
+        retentionCutoffTicker,
+        sessionPreferences.sessionOpenedAtFlow
+    ) { rollingCutoff, sessionOpenedAt ->
+        maxOf(rollingCutoff, sessionOpenedAt)
+    }.flatMapLatest { effectiveCutoff ->
+        dao.observeActiveNotifications(effectiveCutoff).map { entities ->
+            entities.map { it.toDomain() }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val activeLinksFlow: Flow<List<ExtractedLinkItem>> = combine(
+        retentionCutoffTicker,
+        sessionPreferences.sessionOpenedAtFlow
+    ) { rollingCutoff, sessionOpenedAt ->
+        maxOf(rollingCutoff, sessionOpenedAt)
+    }.flatMapLatest { effectiveCutoff ->
+        dao.observeActiveLinks(effectiveCutoff).map { entities ->
+            entities.map { it.toDomain() }
+        }
+    }
+
+    @OptIn(ExperimentalCoroutinesApi::class)
+    val latestDigestFlow: Flow<DigestResult?> = combine(
+        retentionCutoffTicker,
+        sessionPreferences.sessionOpenedAtFlow
+    ) { rollingCutoff, sessionOpenedAt ->
+        maxOf(rollingCutoff, sessionOpenedAt)
+    }.flatMapLatest { effectiveCutoff ->
+        dao.observeLatestDigest(effectiveCutoff).map { it?.toDomain() }
+    }
+
+    suspend fun initializeSession(): Long {
+        val openedAt = sessionPreferences.ensureSessionOpenedAt()
+        purgeExpired()
+        return openedAt
+    }
+
+    suspend fun purgeExpired(): Int {
+        val now = System.currentTimeMillis()
+        val cutoff = now - RETENTION_WINDOW_MS
+        retentionCutoffTicker.value = cutoff
+        val removed = dao.purgeExpiredBefore(cutoff)
+        // Clean up stale handles if keys no longer exist
+        if (removed > 0) {
+            for (key in actionHandleMap.keys.toList()) {
+                if (dao.getByKey(key) == null) {
+                    actionHandleMap.remove(key)
+                }
+            }
+        }
+        return removed
+    }
+
+    suspend fun getSnapshotInWindow(): List<PulseNotificationItem> {
+        val rollingCutoff = computeRetentionCutoff()
+        val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
+        val effectiveCutoff = maxOf(rollingCutoff, sessionOpenedAt)
+        return dao.getActiveNotificationsSnapshot(effectiveCutoff).map { it.toDomain() }
+    }
+
+    suspend fun ingestNotification(
+        key: String,
+        notificationId: Int,
+        packageName: String,
+        appLabel: String,
+        title: String,
+        body: String,
+        postTime: Long,
+        canReply: Boolean,
+        secondaryActions: List<String>,
+        isSimulated: Boolean,
+        sourceChannel: String
+    ): IngestResult {
+        val parsedUrls = UrlExtractor.extractUrls(title, body)
+        val urlStrings = parsedUrls.map { it.url }
+
+        val entity = PulseNotificationEntity(
+            key = key,
+            notificationId = notificationId,
+            packageName = packageName,
+            appLabel = appLabel,
+            title = title,
+            body = body,
+            postTime = postTime,
+            isRead = false,
+            isDismissed = false,
+            canReply = canReply,
+            secondaryActionsJson = PulseJsonCodec.encodeStringList(secondaryActions),
+            repliesJson = "[]",
+            urlsJson = PulseJsonCodec.encodeStringList(urlStrings),
+            isSimulated = isSimulated,
+            sourceChannel = sourceChannel
+        )
+
+        val linkEntities = parsedUrls.map { parsed ->
+            ExtractedLinkEntity(
+                id = UrlExtractor.deterministicId(parsed.normalizedUrl),
+                url = parsed.url,
+                normalizedUrl = parsed.normalizedUrl,
+                domain = parsed.domain,
+                parentNotificationKey = key,
+                packageName = packageName,
+                appLabel = appLabel,
+                senderTitle = title,
+                postTime = postTime
+            )
+        }
+
+        dao.insertNotificationWithLinks(entity, linkEntities)
+        val purgedCount = purgeExpired()
+        return IngestResult(
+            extractedLinkCount = linkEntities.size,
+            purgedExpiredCount = purgedCount
+        )
+    }
+
+    suspend fun markAsRead(key: String) {
+        dao.markAsRead(key)
+    }
+
+    suspend fun sendInlineReply(key: String, replyText: String): Boolean {
+        val trimmed = replyText.trim()
+        if (trimmed.isEmpty()) return false
+
+        val existing = dao.getByKey(key) ?: return false
+        val nativeHandle = actionHandleMap[key]
+        if (nativeHandle != null) {
+            try {
+                val fillInIntent = Intent()
+                val resultsBundle = Bundle().apply {
+                    putCharSequence(nativeHandle.remoteInput.resultKey, trimmed)
+                }
+                RemoteInput.addResultsToIntent(
+                    arrayOf(nativeHandle.remoteInput),
+                    fillInIntent,
+                    resultsBundle
+                )
+                nativeHandle.replyPendingIntent.send(appContext, 0, fillInIntent)
+            } catch (_: PendingIntent.CanceledException) {
+                // Local intent expired; still record reply in thread
+            }
+        }
+
+        val currentReplies = PulseJsonCodec.decodeReplies(existing.repliesJson).toMutableList()
+        currentReplies.add(ReplyEntry(text = trimmed, sentAt = System.currentTimeMillis()))
+        dao.updateReplies(key, PulseJsonCodec.encodeReplies(currentReplies))
+        return true
+    }
+
+    suspend fun dismissNotification(key: String) {
+        val existing = dao.getByKey(key)
+        if (existing != null) {
+            NotificationManagerCompat.from(appContext).cancel(existing.notificationId)
+        }
+        actionHandleMap.remove(key)
+        dao.dismissByKey(key)
+    }
+
+    suspend fun executeSecondaryAction(key: String, actionLabel: String) {
+        val handle = actionHandleMap[key]
+        val pendingIntent = handle?.secondaryActionIntents?.get(actionLabel)
+        if (pendingIntent != null) {
+            try {
+                pendingIntent.send()
+            } catch (_: PendingIntent.CanceledException) {
+                // Ignore if cancelled
+            }
+        }
+        when (actionLabel.lowercase()) {
+            "archive", "delete" -> dismissNotification(key)
+            else -> markAsRead(key)
+        }
+    }
+
+    suspend fun saveDigestResult(result: DigestResult) {
+        dao.saveDigest(
+            DigestSummaryEntity(
+                id = 1,
+                generatedAt = result.generatedAt,
+                mode = result.mode.name,
+                headline = result.headline,
+                appGroupsJson = PulseJsonCodec.encodeAppGroups(result.appGroups),
+                actionItemsJson = PulseJsonCodec.encodeActionItems(result.actionItems),
+                messageCount = result.messageCount
+            )
+        )
+    }
+
+    suspend fun resetSession(): Long {
+        NotificationManagerCompat.from(appContext).cancelAll()
+        actionHandleMap.clear()
+        dao.clearAll()
+        val now = sessionPreferences.resetSessionOpenedAt()
+        retentionCutoffTicker.value = now - RETENTION_WINDOW_MS
+        return now
+    }
+
+    private fun computeRetentionCutoff(): Long =
+        System.currentTimeMillis() - RETENTION_WINDOW_MS
+
+    companion object {
+        const val RETENTION_WINDOW_MS = 86_400_000L
+
+        @Volatile
+        private var INSTANCE: PulseRepository? = null
+
+        fun getInstance(context: Context): PulseRepository {
+            return INSTANCE ?: synchronized(this) {
+                val appCtx = context.applicationContext
+                val db = PulseDatabase.getInstance(appCtx)
+                val prefs = SessionPreferences(appCtx)
+                INSTANCE ?: PulseRepository(appCtx, db.pulseDao(), prefs).also {
+                    INSTANCE = it
+                }
+            }
+        }
+    }
+}
+
+data class IngestResult(
+    val extractedLinkCount: Int,
+    val purgedExpiredCount: Int
+)
+
+private fun PulseNotificationEntity.toDomain(): PulseNotificationItem =
+    PulseNotificationItem(
+        key = key,
+        notificationId = notificationId,
+        packageName = packageName,
+        appLabel = appLabel,
+        title = title,
+        body = body,
+        postTime = postTime,
+        isRead = isRead,
+        isDismissed = isDismissed,
+        canReply = canReply,
+        secondaryActions = PulseJsonCodec.decodeStringList(secondaryActionsJson),
+        replies = PulseJsonCodec.decodeReplies(repliesJson),
+        urls = PulseJsonCodec.decodeStringList(urlsJson),
+        isSimulated = isSimulated,
+        sourceChannel = sourceChannel
+    )
+
+private fun ExtractedLinkEntity.toDomain(): ExtractedLinkItem =
+    ExtractedLinkItem(
+        id = id,
+        url = url,
+        normalizedUrl = normalizedUrl,
+        domain = domain,
+        parentNotificationKey = parentNotificationKey,
+        packageName = packageName,
+        appLabel = appLabel,
+        senderTitle = senderTitle,
+        postTime = postTime
+    )
+
+private fun DigestSummaryEntity.toDomain(): DigestResult =
+    DigestResult(
+        generatedAt = generatedAt,
+        mode = runCatching { DigestMode.valueOf(mode) }.getOrDefault(DigestMode.LOCAL_FALLBACK),
+        headline = headline,
+        appGroups = PulseJsonCodec.decodeAppGroups(appGroupsJson),
+        actionItems = PulseJsonCodec.decodeActionItems(actionItemsJson),
+        messageCount = messageCount
+    )

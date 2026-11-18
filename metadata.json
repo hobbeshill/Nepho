@@ -1,0 +1,6 @@
+{
+  "name": "PulseHub",
+  "description": "Unified notification aggregator, AI daily summarizer, and extracted link vault with a 24-hour rolling retention window.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
