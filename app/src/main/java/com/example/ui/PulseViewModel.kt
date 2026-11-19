@@ -434,7 +434,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             val sent = repository.sendInlineReply(key, replyText, gifUri)
             if (gifUri != null && !sent) {
-                _snackbarEvents.tryEmit("Couldn't send the GIF. Try opening the conversation in its app.")
+                emitSnackbar("Couldn't send the GIF. Try opening the conversation in its app.")
             }
         }
     }
