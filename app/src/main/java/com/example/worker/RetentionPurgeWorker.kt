@@ -15,29 +15,15 @@ class RetentionPurgeWorker(
 ) : CoroutineWorker(appContext, params) {
 
     override suspend fun doWork(): Result {
-        return try {
-            val repository = PulseRepository.getInstance(applicationContext)
-            repository.purgeExpired()
-            Result.success()
-        } catch (_: Exception) {
-            Result.retry()
-        }
+        // 24-hour auto-purge has been removed in favor of action-driven cleanup.
+        return Result.success()
     }
 
     companion object {
         private const val UNIQUE_WORK_NAME = "nepho_24h_retention_purge"
 
-        fun schedulePeriodicPurge(context: Context) {
-            val request = PeriodicWorkRequestBuilder<RetentionPurgeWorker>(
-                15,
-                TimeUnit.MINUTES
-            ).build()
-
-            WorkManager.getInstance(context.applicationContext).enqueueUniquePeriodicWork(
-                UNIQUE_WORK_NAME,
-                ExistingPeriodicWorkPolicy.KEEP,
-                request
-            )
+        fun cancel(context: Context) {
+            WorkManager.getInstance(context.applicationContext).cancelUniqueWork(UNIQUE_WORK_NAME)
         }
     }
 }

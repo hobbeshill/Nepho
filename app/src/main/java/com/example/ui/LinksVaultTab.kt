@@ -56,7 +56,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.ExtractedLinkItem
-import com.example.data.PulseRepository
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderHairline
 import com.example.ui.theme.CyanPulse
@@ -116,8 +115,9 @@ fun LazyListScope.linksVaultSectionItems(
                         style = MaterialTheme.typography.titleMedium,
                         color = CyanPulse
                     )
+                    val domainCount = links.map { it.domain }.distinct().size
                     Text(
-                        text = "${links.map { it.domain }.distinct().size} domains • Auto-purged at 24h",
+                        text = "$domainCount domain${if (domainCount == 1) "" else "s"}",
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
@@ -236,9 +236,6 @@ private fun VaultLinkCard(
     onCopyLink: () -> Unit
 ) {
     val app = link.supportedApp
-    val remainingMs = (link.postTime + PulseRepository.RETENTION_WINDOW_MS) - System.currentTimeMillis()
-    val remainingHours = (remainingMs / 3_600_000L).coerceAtLeast(0)
-    val remainingMinutes = ((remainingMs % 3_600_000L) / 60_000L).coerceAtLeast(0)
 
     Card(
         modifier = Modifier
@@ -291,11 +288,13 @@ private fun VaultLinkCard(
                 }
 
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text(
-                        text = if (link.isStarred) "Starred • Protected" else "${remainingHours}h ${remainingMinutes}m left",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = AmberSignal
-                    )
+                    if (link.isStarred) {
+                        Text(
+                            text = "Starred",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = AmberSignal
+                        )
+                    }
                     IconButton(
                         onClick = onToggleStar,
                         modifier = Modifier

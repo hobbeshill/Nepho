@@ -61,41 +61,9 @@ object DigestSchedule {
 
 class DigestWorker(context: Context, params: WorkerParameters) : CoroutineWorker(context, params) {
     override suspend fun doWork(): Result {
-        val dao = PulseDatabase.getInstance(applicationContext).pulseDao()
-        try {
-            while (true) {
-                val settings = dao.getDigestSettings() ?: return Result.success()
-                if (!settings.enabled || settings.nextEnd > System.currentTimeMillis()) return Result.success()
-                val end = settings.nextEnd
-                val events = dao.getDigestEventsBefore(end)
-                val summary = if (events.isEmpty()) {
-                    applicationContext.getString(R.string.digest_no_activity)
-                } else {
-                    configureAppCheck(applicationContext, null)
-                    summarize(events)
-                }
-                val links = JSONArray()
-                val uniqueLinks = linkedSetOf<String>()
-                events.forEach { event ->
-                    val array = JSONArray(event.urlsJson)
-                    for (i in 0 until array.length()) uniqueLinks.add(array.getString(i))
-                }
-                uniqueLinks.forEach { links.put(it) }
-                val saved = dao.completeDigest(
-                    DigestSummaryEntity(end, DigestSchedule.previousBoundary(end), summary, links.toString()),
-                    DigestSchedule.nextBoundary(end)
-                )
-                if (!saved) return Result.success()
-                notifyDigest(failed = false)
-            }
-        } catch (e: CancellationException) {
-            throw e
-        } catch (e: Exception) {
-            Log.e("DigestWorker", "Digest generation failed", e)
-            dao.setDigestError(applicationContext.getString(R.string.digest_failed))
-            notifyDigest(failed = true)
-            return Result.retry()
-        }
+        // 6 AM / 6 PM summaries have been removed; cancel any legacy scheduled job cleanly.
+        cancel(applicationContext)
+        return Result.success()
     }
 
     private suspend fun summarize(events: List<DigestEventEntity>): String {

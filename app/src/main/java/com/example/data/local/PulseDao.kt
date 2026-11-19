@@ -11,6 +11,26 @@ import kotlinx.coroutines.flow.Flow
 interface PulseDao {
     @Query(
         "SELECT * FROM pulse_notifications " +
+            "WHERE isDismissed = 0 " +
+            "ORDER BY postTime DESC"
+    )
+    fun observeAllActiveNotifications(): Flow<List<PulseNotificationEntity>>
+
+    @Query(
+        "SELECT * FROM pulse_notifications " +
+            "WHERE isDismissed = 0 " +
+            "ORDER BY postTime DESC"
+    )
+    suspend fun getAllActiveNotificationsSnapshot(): List<PulseNotificationEntity>
+
+    @Query(
+        "SELECT * FROM extracted_links " +
+            "ORDER BY postTime DESC"
+    )
+    fun observeAllActiveLinks(): Flow<List<ExtractedLinkEntity>>
+
+    @Query(
+        "SELECT * FROM pulse_notifications " +
             "WHERE isDismissed = 0 AND (isStarred = 1 OR postTime >= :cutoffTime) " +
             "ORDER BY postTime DESC"
     )
@@ -40,6 +60,17 @@ interface PulseDao {
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLinks(links: List<ExtractedLinkEntity>)
+
+    @Transaction
+    suspend fun insertNotificationAndLinks(
+        notification: PulseNotificationEntity,
+        links: List<ExtractedLinkEntity>
+    ) {
+        insertNotification(notification)
+        if (links.isNotEmpty()) {
+            insertLinks(links)
+        }
+    }
 
     @Transaction
     suspend fun insertNotificationWithLinks(
@@ -114,6 +145,12 @@ interface PulseDao {
             "WHERE `key` = :key"
     )
     suspend fun restoreDismissedByKey(key: String, reminderAt: Long?, reminderNote: String?)
+
+    @Query(
+        "SELECT * FROM pulse_notifications " +
+            "WHERE packageName = :packageName AND isDismissed = 0 AND isStarred = 0"
+    )
+    suspend fun getAllActiveUnstarredByPackage(packageName: String): List<PulseNotificationEntity>
 
     @Query(
         "SELECT * FROM pulse_notifications " +

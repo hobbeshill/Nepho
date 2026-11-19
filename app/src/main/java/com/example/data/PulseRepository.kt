@@ -79,6 +79,17 @@ class PulseRepository private constructor(
         }
     }
 
+    /**
+     * Opens the original conversation and clears the notification from Nepho once acted upon.
+     */
+    suspend fun openSourceConversationAndClear(key: String): Boolean {
+        val opened = openSourceConversation(key)
+        if (opened) {
+            dismissNotification(key)
+        }
+        return opened
+    }
+
     fun registerNativeActionHandle(key: String, handle: NativeReplyHandle) {
         actionHandleMap[key] = handle
     }
@@ -99,29 +110,15 @@ class PulseRepository private constructor(
         retentionCutoffTicker.value = computeRetentionCutoff()
     }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val activeNotificationsFlow: Flow<List<PulseNotificationItem>> = combine(
-        retentionCutoffTicker,
-        sessionPreferences.sessionOpenedAtFlow
-    ) { rollingCutoff, sessionOpenedAt ->
-        maxOf(rollingCutoff, sessionOpenedAt)
-    }.distinctUntilChanged().flatMapLatest { effectiveCutoff ->
-        dao.observeActiveNotifications(effectiveCutoff).map { entities ->
+    val activeNotificationsFlow: Flow<List<PulseNotificationItem>> =
+        dao.observeAllActiveNotifications().map { entities ->
             entities.map { it.toDomain() }
         }
-    }
 
-    @OptIn(ExperimentalCoroutinesApi::class)
-    val activeLinksFlow: Flow<List<ExtractedLinkItem>> = combine(
-        retentionCutoffTicker,
-        sessionPreferences.sessionOpenedAtFlow
-    ) { rollingCutoff, sessionOpenedAt ->
-        maxOf(rollingCutoff, sessionOpenedAt)
-    }.distinctUntilChanged().flatMapLatest { effectiveCutoff ->
-        dao.observeActiveLinks(effectiveCutoff).map { entities ->
+    val activeLinksFlow: Flow<List<ExtractedLinkItem>> =
+        dao.observeAllActiveLinks().map { entities ->
             entities.map { it.toDomain() }
         }
-    }
 
     val captureDiagnosticsFlow: Flow<List<CaptureDiagnosticEntity>> =
         dao.observeCaptureDiagnostics(MAX_DIAGNOSTIC_ROWS)
@@ -152,15 +149,12 @@ class PulseRepository private constructor(
     }
 
     suspend fun initializeSession(): Long {
-        val openedAt = sessionPreferences.ensureSessionOpenedAt()
-        purgeExpired()
-        return openedAt
+        return sessionPreferences.ensureSessionOpenedAt()
     }
 
     suspend fun loadWidgetSnapshot(): NephoWidgetSnapshot {
         val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
-        val effectiveCutoff = maxOf(computeRetentionCutoff(), sessionOpenedAt)
-        val active = dao.getActiveNotificationsSnapshot(effectiveCutoff).map { it.toDomain() }
+        val active = dao.getAllActiveNotificationsSnapshot().map { it.toDomain() }
         return NephoWidgetSnapshotBuilder.build(
             activeNotifications = active,
             sessionOpenedAt = sessionOpenedAt,
@@ -241,22 +235,11 @@ class PulseRepository private constructor(
             )
         }
 
-        dao.insertNotificationWithLinks(
-            entity,
-            linkEntities,
-            DigestEventEntity(
-                capturedAt = 0,
-                appLabel = appLabel,
-                title = title,
-                body = body,
-                urlsJson = entity.urlsJson
-            )
-        )
-        val purgedCount = purgeExpired()
+        dao.insertNotificationAndLinks(entity, linkEntities)
         NephoWidgetUpdater.requestUpdate(appContext)
         return IngestResult(
             extractedLinkCount = linkEntities.size,
-            purgedExpiredCount = purgedCount
+            purgedExpiredCount = 0
         )
     }
 
@@ -571,10 +554,7 @@ class PulseRepository private constructor(
      * and returning an [UndoDismissBatch] for one-tap restoration.
      */
     suspend fun dismissUnstarredForPackageWithUndo(packageName: String): UndoDismissBatch {
-        val rollingCutoff = computeRetentionCutoff()
-        val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
-        val effectiveCutoff = maxOf(rollingCutoff, sessionOpenedAt)
-        val targets = dao.getActiveUnstarredByPackage(packageName, effectiveCutoff)
+        val targets = dao.getAllActiveUnstarredByPackage(packageName)
         val keptStarred = dao.countActiveStarredByPackage(packageName)
         val snapshots = targets.map { entity ->
             NotificationManagerCompat.from(appContext).cancel(entity.notificationId)

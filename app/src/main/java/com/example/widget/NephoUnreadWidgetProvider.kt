@@ -323,10 +323,7 @@ class NephoUnreadWidgetProvider : AppWidgetProvider() {
                 val emptySubtitle = if (!snapshot.isNotificationAccessGranted) {
                     context.getString(R.string.widget_access_off)
                 } else {
-                    context.getString(
-                        R.string.widget_caught_up_since,
-                        timeFmt.format(Date(snapshot.sessionOpenedAt))
-                    )
+                    context.getString(R.string.widget_caught_up_clean)
                 }
                 views.setTextViewText(R.id.widget_empty_subtitle, emptySubtitle)
                 views.setOnClickPendingIntent(

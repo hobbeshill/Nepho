@@ -33,7 +33,6 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         handleIncomingShareIntent(intent)
-        handleDigestIntent(intent)
         handleWidgetIntent(intent)
 
         setContent {
@@ -144,7 +143,6 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleHomeIntent(intent)
         handleIncomingShareIntent(intent)
-        handleDigestIntent(intent)
         handleWidgetIntent(intent)
     }
 
@@ -153,18 +151,10 @@ class MainActivity : ComponentActivity() {
         val isHomeOrMainReturn = intent.action == Intent.ACTION_MAIN &&
             (intent.hasCategory(Intent.CATEGORY_HOME) ||
                 (intent.hasCategory(Intent.CATEGORY_LAUNCHER) &&
-                    !intent.hasExtra("open_digest") &&
                     !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID) &&
                     !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE)))
         if (isHomeOrMainReturn) {
             viewModel.onHomeButtonPressed()
-        }
-    }
-
-    private fun handleDigestIntent(intent: Intent?) {
-        if (intent?.getBooleanExtra("open_digest", false) == true) {
-            viewModel.requestOpenDigest()
-            intent.removeExtra("open_digest")
         }
     }
 

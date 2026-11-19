@@ -46,7 +46,6 @@ import com.example.notifications.NephoNotificationListener
 import com.example.updates.GitHubReleaseUpdater
 import com.example.updates.UpdateCheckState
 import com.example.widget.NephoWidgetUpdater
-import com.example.worker.DigestSchedule
 import com.example.worker.DigestWorker
 import com.example.worker.RetentionPurgeWorker
 import kotlinx.coroutines.Dispatchers
@@ -89,14 +88,7 @@ data class ListenerHealthState(
 class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = PulseRepository.getInstance(application)
-    private val digestDao = PulseDatabase.getInstance(application).pulseDao()
-
-    val digestSettings = digestDao.observeDigestSettings()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
-    val digestSummaries = digestDao.observeDigestSummaries()
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
-    private val _openDigest = MutableStateFlow(false)
-    val openDigest = _openDigest.asStateFlow()
+    private val legacyDao = PulseDatabase.getInstance(application).pulseDao()
 
     private val _pendingWidgetThreadId = MutableStateFlow<String?>(null)
     val pendingWidgetThreadId: StateFlow<String?> = _pendingWidgetThreadId.asStateFlow()
@@ -289,9 +281,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _snackbarEvents.tryEmit(SnackbarEvent(message, actionLabel, onAction))
     }
 
-    val sessionOpenedAt: StateFlow<Long> = repository.sessionPreferences.sessionOpenedAtFlow
-        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), System.currentTimeMillis())
-
     val bannerDismissed: StateFlow<Boolean> = repository.sessionPreferences.bannerDismissedFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), false)
 
@@ -397,7 +386,9 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), SessionMetrics())
 
     init {
-        RetentionPurgeWorker.schedulePeriodicPurge(application)
+        // Cancel legacy 24h auto-purge and 6 AM/PM digest background jobs on existing installs
+        RetentionPurgeWorker.cancel(application)
+        DigestWorker.cancel(application)
         registerPackageChangeReceiver(application)
         refreshLauncherState()
         viewModelScope.launch {
@@ -407,19 +398,14 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
         viewModelScope.launch {
             repository.initializeSession()
-            val settings = digestDao.getDigestSettings()
-            if (settings?.enabled == true) {
-                DigestWorker.schedule(application, settings.nextEnd)
+            legacyDao.getDigestSettings()?.takeIf { it.enabled }?.let { settings ->
+                legacyDao.setDigestEnabled(false, settings.nextEnd)
             }
         }
         viewModelScope.launch {
             while (isActive) {
                 delay(60_000L)
                 _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(getApplication())
-                val purged = repository.purgeExpired()
-                if (purged > 0) {
-                    emitSnackbar("24h rolling window purged $purged expired entries.")
-                }
             }
         }
     }
@@ -804,14 +790,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _selectedTab.value = tab
     }
 
-    fun requestOpenDigest() {
-        _openDigest.value = true
-    }
-
-    fun clearOpenDigest() {
-        _openDigest.value = false
-    }
-
     fun openThreadFromWidget(threadId: String) {
         if (threadId.isBlank()) return
         _selectedTab.value = PulseTab.FEED
@@ -895,32 +873,12 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         emitSnackbar(confirmationMessage)
     }
 
-    fun setDigestEnabled(enabled: Boolean) {
-        viewModelScope.launch {
-            try {
-                val context = getApplication<Application>()
-                val settings = digestDao.setDigestEnabled(
-                    enabled,
-                    DigestSchedule.nextBoundary(System.currentTimeMillis())
-                )
-                if (enabled) DigestWorker.schedule(context, settings.nextEnd)
-                else DigestWorker.cancel(context)
-            } catch (e: Exception) {
-                Log.e("PulseViewModel", "Could not update digest settings", e)
-                emitSnackbar(getApplication<Application>().getString(R.string.digest_settings_failed))
-            }
-        }
-    }
-
-    fun updateSearchQuery(query: String) {
-        _searchQuery.value = query
-    }
-
     fun updateVaultSearchQuery(query: String) {
         _vaultSearchQuery.value = query
     }
 
     fun selectAppFilter(app: SupportedApp?) {
+        _searchQuery.value = ""
         _selectedAppFilter.value = if (_selectedAppFilter.value == app) null else app
     }
 
@@ -947,7 +905,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             val isNowStarred = repository.toggleNotificationStar(key)
             emitSnackbar(
                 if (isNowStarred) {
-                    "Starred • Protected from swipe dismiss and 24h purge."
+                    "Starred • Protected from swipe dismiss."
                 } else {
                     "Star removed."
                 }
@@ -1292,10 +1250,12 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     fun openSourceApp(item: PulseNotificationItem) {
-        if (!repository.openSourceConversation(item.key)) {
-            emitSnackbar(
-                "The original ${item.appLabel} conversation is no longer available. Open it in ${item.appLabel}."
-            )
+        viewModelScope.launch {
+            if (!repository.openSourceConversationAndClear(item.key)) {
+                emitSnackbar(
+                    "The original ${item.appLabel} conversation is no longer available. Open it in ${item.appLabel}."
+                )
+            }
         }
     }
 
@@ -1315,19 +1275,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         } catch (e: SecurityException) {
             Log.w(TAG, "Cannot launch ${app.packageName}", e)
             emitSnackbar(context.getString(R.string.open_app_unavailable, app.displayName))
-        }
-    }
-
-    fun resetSession() {
-        viewModelScope.launch {
-            repository.resetSession()
-            _selectedAppFilter.value = null
-            _unreadOnly.value = false
-            _hasLinksOnly.value = false
-            _starredOnly.value = false
-            _searchQuery.value = ""
-            _vaultSearchQuery.value = ""
-            emitSnackbar("Session reset. Starred items preserved; 24h window restarted.")
         }
     }
 

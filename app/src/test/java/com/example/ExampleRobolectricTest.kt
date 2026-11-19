@@ -504,17 +504,17 @@ class ExampleRobolectricTest {
     }
 
     @Test
-    fun `repository enforces 24h rolling purge on expired notifications and links`() = runTest {
+    fun `notifications and links older than 24h stay active until acted upon`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = PulseRepository.getInstance(context)
         repo.resetSession()
 
         val now = System.currentTimeMillis()
-        val twentyFiveHoursAgo = now - (25 * 60 * 60 * 1000L)
+        val fortyEightHoursAgo = now - (48 * 60 * 60 * 1000L)
 
         ingest(
             repo = repo,
-            key = "fresh_purge_test",
+            key = "fresh_action_test",
             app = SupportedApp.OUTLOOK,
             title = "Finance",
             body = "Invoice sheet at https://contoso.sharepoint.com/sites/finance/inv-4092",
@@ -524,38 +524,52 @@ class ExampleRobolectricTest {
         )
         ingest(
             repo = repo,
-            key = "expired_purge_test",
+            key = "older_than_24h_test",
             app = SupportedApp.GMAIL,
-            title = "Expired Archive Alert (25h Old)",
-            body = "25 hours old with https://expired.example.com/old-report must be purged.",
-            postTime = twentyFiveHoursAgo
+            title = "Older Important Alert (48h Old)",
+            body = "48 hours old with https://retained.example.com/report must remain until acted upon.",
+            postTime = fortyEightHoursAgo
         )
 
         val activeNotifications = repo.activeNotificationsFlow.first()
         val activeLinks = repo.activeLinksFlow.first()
 
-        assertEquals(1, activeNotifications.size)
-        assertEquals("fresh_purge_test", activeNotifications.first().key)
-        assertTrue(activeLinks.none { it.domain == "expired.example.com" })
+        assertEquals(2, activeNotifications.size)
+        assertTrue(activeNotifications.any { it.key == "fresh_action_test" })
+        assertTrue(activeNotifications.any { it.key == "older_than_24h_test" })
+        assertTrue(activeLinks.any { it.domain == "retained.example.com" })
+
+        // Acting on the older alert (opening its source conversation) clears it from Nepho
+        val openIntent = PendingIntent.getActivity(
+            context,
+            8801,
+            Intent(context, MainActivity::class.java).setData(Uri.parse("test://conversation/older")),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        repo.registerContentIntent("older_than_24h_test", openIntent)
+        assertTrue(repo.openSourceConversationAndClear("older_than_24h_test"))
+
+        val remainingAfterOpen = repo.activeNotificationsFlow.first()
+        assertEquals(1, remainingAfterOpen.size)
+        assertEquals("fresh_action_test", remainingAfterOpen.first().key)
     }
 
     @Test
-    fun `starred notifications and links are never purged by 24h cleanup or session reset`() = runTest {
+    fun `starred notifications are protected from group clear while unstarred alerts clear cleanly`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = PulseRepository.getInstance(context)
         repo.resetSession()
 
         val now = System.currentTimeMillis()
-        val twentyFiveHoursAgo = now - (25 * 60 * 60 * 1000L)
+        val thirtyHoursAgo = now - (30 * 60 * 60 * 1000L)
 
-        // Insert old item and star it before purge
         ingest(
             repo = repo,
             key = "starred_old_test",
             app = SupportedApp.GMAIL,
             title = "Starred Old Alert",
-            body = "Old but starred with https://expired.example.com/starred-report",
-            postTime = now
+            body = "Old and starred with https://starred.example.com/starred-report",
+            postTime = thirtyHoursAgo
         )
         repo.toggleNotificationStar("starred_old_test")
 
@@ -564,20 +578,22 @@ class ExampleRobolectricTest {
             key = "unstarred_old_test",
             app = SupportedApp.GMAIL,
             title = "Unstarred Old Alert",
-            body = "Unstarred 25h old message with https://unstarred.example.com/item",
-            postTime = twentyFiveHoursAgo
+            body = "Unstarred 30h old message with https://unstarred.example.com/item",
+            postTime = thirtyHoursAgo
         )
 
-        repo.purgeExpired()
-        repo.resetSession()
+        val batch = repo.dismissUnstarredForPackageWithUndo(SupportedApp.GMAIL.packageName)
+        assertEquals(1, batch.items.size)
+        assertEquals("unstarred_old_test", batch.items.first().key)
+        assertEquals(1, batch.keptStarredCount)
 
-        val activeAfterReset = repo.activeNotificationsFlow.first()
-        val linksAfterReset = repo.activeLinksFlow.first()
+        val activeAfterClear = repo.activeNotificationsFlow.first()
+        val linksAfterClear = repo.activeLinksFlow.first()
 
-        assertEquals(1, activeAfterReset.size)
-        assertEquals("starred_old_test", activeAfterReset.first().key)
-        assertTrue(activeAfterReset.first().isStarred)
-        assertTrue(linksAfterReset.any { it.domain == "expired.example.com" && it.isStarred })
+        assertEquals(1, activeAfterClear.size)
+        assertEquals("starred_old_test", activeAfterClear.first().key)
+        assertTrue(activeAfterClear.first().isStarred)
+        assertTrue(linksAfterClear.any { it.domain == "starred.example.com" && it.isStarred })
 
         // Clean up starred test record so subsequent tests start with a clean DB
         repo.toggleNotificationStar("starred_old_test")

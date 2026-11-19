@@ -25,6 +25,8 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.KeyboardArrowLeft
@@ -74,12 +76,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
@@ -156,7 +161,8 @@ fun LazyListScope.appDrawerSectionItems(
     onSearchQueryChange: (String) -> Unit,
     onJumpToLetter: (String) -> Unit,
     onLaunchApp: (LauncherAppInfo) -> Unit,
-    onTogglePin: (LauncherAppInfo) -> Unit
+    onTogglePin: (LauncherAppInfo) -> Unit,
+    onSearchFocusChanged: (Boolean) -> Unit = {}
 ) {
     item(key = "app_drawer_header") {
         Column(
@@ -200,11 +206,15 @@ fun LazyListScope.appDrawerSectionItems(
                 }
             }
 
+            val keyboardController = LocalSoftwareKeyboardController.current
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onFocusChanged { focusState ->
+                        onSearchFocusChanged(focusState.isFocused)
+                    }
                     .testTag("app_drawer_search_input"),
                 placeholder = {
                     Text(
@@ -234,6 +244,12 @@ fun LazyListScope.appDrawerSectionItems(
                     }
                 },
                 singleLine = true,
+                keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                keyboardActions = KeyboardActions(
+                    onSearch = {
+                        keyboardController?.hide()
+                    }
+                ),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
                     focusedContainerColor = MidnightSurface,

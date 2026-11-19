@@ -9,14 +9,18 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.consumeWindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.imePadding
+import androidx.compose.foundation.layout.isImeVisible
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
@@ -34,7 +38,6 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
-import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Home
@@ -78,11 +81,8 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
-import androidx.compose.ui.text.SpanStyle
-import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.BuildConfig
@@ -100,10 +100,9 @@ import com.example.ui.theme.ObsidianBackground
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
-import java.util.Date
 import java.util.Locale
 
-@OptIn(ExperimentalMaterial3Api::class)
+@OptIn(ExperimentalMaterial3Api::class, ExperimentalLayoutApi::class)
 @Composable
 fun NephoApp(
     viewModel: PulseViewModel,
@@ -115,13 +114,11 @@ fun NephoApp(
     onEnableScreenLockAdmin: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
-    val sessionOpenedAt by viewModel.sessionOpenedAt.collectAsStateWithLifecycle()
     val bannerDismissed by viewModel.bannerDismissed.collectAsStateWithLifecycle()
     val hasNotificationPermission by viewModel.hasNotificationPermission.collectAsStateWithLifecycle()
     val isNotificationAccessGranted by viewModel.isNotificationAccessGranted.collectAsStateWithLifecycle()
     val defaultShadeMode by viewModel.defaultShadeMode.collectAsStateWithLifecycle()
     val shadePreferenceItems by viewModel.shadePreferenceItems.collectAsStateWithLifecycle()
-    val searchQuery by viewModel.searchQuery.collectAsStateWithLifecycle()
     val vaultSearchQuery by viewModel.vaultSearchQuery.collectAsStateWithLifecycle()
     val selectedAppFilter by viewModel.selectedAppFilter.collectAsStateWithLifecycle()
     val unreadOnly by viewModel.unreadOnly.collectAsStateWithLifecycle()
@@ -131,9 +128,6 @@ fun NephoApp(
     val allNotifications by viewModel.allActiveNotifications.collectAsStateWithLifecycle()
     val links by viewModel.activeLinks.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
-    val digestSettings by viewModel.digestSettings.collectAsStateWithLifecycle()
-    val digestSummaries by viewModel.digestSummaries.collectAsStateWithLifecycle()
-    val openDigest by viewModel.openDigest.collectAsStateWithLifecycle()
     val listenerHealth by viewModel.listenerHealth.collectAsStateWithLifecycle()
     val captureDiagnostics by viewModel.captureDiagnostics.collectAsStateWithLifecycle()
     val pendingWidgetThreadId by viewModel.pendingWidgetThreadId.collectAsStateWithLifecycle()
@@ -169,23 +163,18 @@ fun NephoApp(
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by rememberSaveable { mutableStateOf(false) }
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
-    var showDigestDialog by rememberSaveable { mutableStateOf(false) }
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
     var showQuickAlarmDialog by rememberSaveable { mutableStateOf(false) }
     var showWeatherDialog by rememberSaveable { mutableStateOf(false) }
     var showMusicServiceDialog by rememberSaveable { mutableStateOf(false) }
     var showShortcutDrawer by rememberSaveable { mutableStateOf(false) }
+    var isAppSearchFocused by remember { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
-
-    LaunchedEffect(openDigest) {
-        if (openDigest) {
-            showDigestDialog = true
-            viewModel.clearOpenDigest()
-        }
-    }
+    val isImeVisible = WindowInsets.isImeVisible
+    val isAppSearchElevated = isAppSearchFocused || appSearchQuery.isNotBlank()
 
     LaunchedEffect(pendingWidgetThreadId, allNotifications) {
         val targetId = pendingWidgetThreadId ?: return@LaunchedEffect
@@ -226,10 +215,10 @@ fun NephoApp(
             showMusicServiceDialog = false
             showComposeDialog = false
             showShadePrefsDialog = false
-            showDigestDialog = false
             showDiagnosticsDialog = false
             showUpdatesDialog = false
             menuExpanded = false
+            isAppSearchFocused = false
             reminderTargetItem = null
             threadTargetId = null
             launch { portraitListState.animateScrollToItem(0) }
@@ -297,15 +286,6 @@ fun NephoApp(
             onOpenSelectedService = viewModel::openPreferredMusicService,
             onGrantNotificationAccess = onOpenNotificationAccessSettings,
             onDismiss = { showMusicServiceDialog = false }
-        )
-    }
-
-    if (showDigestDialog) {
-        DigestDialog(
-            settings = digestSettings,
-            summaries = digestSummaries,
-            onSetEnabled = viewModel::setDigestEnabled,
-            onDismiss = { showDigestDialog = false }
         )
     }
 
@@ -421,6 +401,31 @@ fun NephoApp(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isLandscapeSplit = maxWidth >= 640.dp
+        val drawerHeaderIndex = if (isLandscapeSplit) 3 else (4 + inboxItemCount)
+        val searchRunwayHeight = (maxHeight * 0.65f).coerceAtLeast(280.dp)
+
+        val scrollAppSearchToTop: () -> Unit = {
+            coroutineScope.launch {
+                val state: LazyListState = if (isLandscapeSplit) landscapeLeftListState else portraitListState
+                state.animateScrollToItem(drawerHeaderIndex)
+                delay(180L)
+                state.animateScrollToItem(drawerHeaderIndex)
+            }
+        }
+
+        LaunchedEffect(isAppSearchFocused, isImeVisible, drawerHeaderIndex) {
+            if (isAppSearchFocused && isImeVisible) {
+                val state = if (isLandscapeSplit) landscapeLeftListState else portraitListState
+                state.animateScrollToItem(drawerHeaderIndex)
+            }
+        }
+
+        LaunchedEffect(appSearchQuery, drawerHeaderIndex) {
+            if (appSearchQuery.isNotBlank() || isAppSearchFocused) {
+                val state = if (isLandscapeSplit) landscapeLeftListState else portraitListState
+                state.animateScrollToItem(drawerHeaderIndex)
+            }
+        }
 
         val jumpToSection: (HomeSectionTarget) -> Unit = { target ->
             coroutineScope.launch {
@@ -453,9 +458,7 @@ fun NephoApp(
                             portraitListState.animateScrollToItem(3)
                         }
                         HomeSectionTarget.APPS -> {
-                            // 0=Clock, 1=Music, 2=Calendar, 3=InboxSwitcher, 4..4+inboxItemCount-1=InboxItems
-                            val appDrawerHeaderIndex = 4 + inboxItemCount
-                            portraitListState.animateScrollToItem(appDrawerHeaderIndex)
+                            portraitListState.animateScrollToItem(drawerHeaderIndex)
                         }
                     }
                 }
@@ -463,7 +466,6 @@ fun NephoApp(
         }
 
         val jumpToDrawerLetter: (String) -> Unit = { letter ->
-            val drawerHeaderIndex = if (isLandscapeSplit) 3 else (4 + inboxItemCount)
             val offsetInsideDrawer = computeLetterOffsetInDrawer(groupedApps, letter)
             if (offsetInsideDrawer >= 0) {
                 val targetIndex = drawerHeaderIndex + 1 + offsetInsideDrawer
@@ -512,94 +514,11 @@ fun NephoApp(
                             titleContentColor = MaterialTheme.colorScheme.onBackground
                         ),
                         title = {
-                            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
-                                Row(
-                                    verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable { viewModel.onHomeButtonPressed() }
-                                ) {
-                                    Image(
-                                        painter = painterResource(R.drawable.nepho_mark),
-                                        contentDescription = stringResource(R.string.app_name),
-                                        contentScale = ContentScale.Crop,
-                                        modifier = Modifier
-                                            .size(26.dp)
-                                            .clip(RoundedCornerShape(7.dp))
-                                            .testTag("top_bar_nepho_logo")
-                                    )
-                                    val appName = stringResource(R.string.app_name)
-                                    val tagline = stringResource(R.string.app_header_tagline)
-                                    val titleColor = MaterialTheme.colorScheme.onBackground
-                                    val taglineColor = MaterialTheme.colorScheme.onSurfaceVariant
-                                    val taglineStyle = MaterialTheme.typography.bodySmall
-                                    Text(
-                                        text = buildAnnotatedString {
-                                            withStyle(SpanStyle(color = titleColor)) {
-                                                append(appName)
-                                            }
-                                            withStyle(
-                                                SpanStyle(
-                                                    color = taglineColor,
-                                                    fontFamily = taglineStyle.fontFamily,
-                                                    fontWeight = taglineStyle.fontWeight,
-                                                    fontSize = taglineStyle.fontSize
-                                                )
-                                            ) {
-                                                append(tagline)
-                                            }
-                                        },
-                                        style = MaterialTheme.typography.titleLarge,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier
-                                            .weight(1f, fill = false)
-                                            .testTag("top_bar_title")
-                                    )
-                                    Text(
-                                        text = stringResource(R.string.app_version_short, BuildConfig.VERSION_NAME),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = CyanPulse,
-                                        maxLines = 1,
-                                        softWrap = false,
-                                        modifier = Modifier.testTag("top_bar_version")
-                                    )
-                                    val healthDotColor = when {
-                                        !listenerHealth.isAccessGranted -> CrimsonError
-                                        listenerHealth.isListenerConnected -> EmeraldOk
-                                        else -> AmberSignal
-                                    }
-                                    Box(
-                                        modifier = Modifier
-                                            .size(8.dp)
-                                            .clip(CircleShape)
-                                            .background(healthDotColor)
-                                    )
-                                }
-                                val sinceText = timeFmt.format(Date(sessionOpenedAt))
-                                Surface(
-                                    shape = RoundedCornerShape(8.dp),
-                                    color = MidnightSurface,
-                                    border = BorderStroke(1.dp, BorderHairline),
-                                    modifier = Modifier
-                                        .clip(RoundedCornerShape(8.dp))
-                                        .clickable {
-                                            viewModel.refreshAccessAndPermissions()
-                                            showDiagnosticsDialog = true
-                                        }
-                                        .testTag("session_status_pill")
-                                ) {
-                                    Text(
-                                        text = stringResource(R.string.status_window_pill, sinceText),
-                                        style = MaterialTheme.typography.labelSmall,
-                                        color = CyanPulse,
-                                        maxLines = 1,
-                                        overflow = TextOverflow.Ellipsis,
-                                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 3.dp)
-                                    )
-                                }
-                            }
+                            NephoHeaderTitle(
+                                versionName = BuildConfig.VERSION_NAME,
+                                listenerHealth = listenerHealth,
+                                onClick = { viewModel.onHomeButtonPressed() }
+                            )
                         },
                         actions = {
                             IconButton(
@@ -611,19 +530,6 @@ fun NephoApp(
                                 Icon(
                                     imageVector = Icons.Outlined.Tune,
                                     contentDescription = stringResource(R.string.action_shade_preferences),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
-                            }
-
-                            IconButton(
-                                onClick = { viewModel.resetSession() },
-                                modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("reset_session_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.RestartAlt,
-                                    contentDescription = stringResource(R.string.action_reset_session),
                                     tint = MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
@@ -696,14 +602,6 @@ fun NephoApp(
                                         modifier = Modifier.testTag("menu_double_tap_lock")
                                     )
                                     DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.digest_title)) },
-                                        onClick = {
-                                            menuExpanded = false
-                                            showDigestDialog = true
-                                        },
-                                        modifier = Modifier.testTag("menu_digest")
-                                    )
-                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_shade_preferences)) },
                                         leadingIcon = {
                                             Icon(Icons.Outlined.Tune, contentDescription = null)
@@ -759,17 +657,6 @@ fun NephoApp(
                                         },
                                         modifier = Modifier.testTag("menu_compose_capture")
                                     )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_reset_session)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Default.RestartAlt, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            menuExpanded = false
-                                            viewModel.resetSession()
-                                        },
-                                        modifier = Modifier.testTag("menu_reset_session")
-                                    )
                                 }
                             }
                         }
@@ -777,17 +664,21 @@ fun NephoApp(
                 }
             },
             bottomBar = {
-                BottomShortcutDock(
-                    pinnedApps = pinnedShortcutApps,
-                    onLaunchApp = viewModel::launchInstalledApp,
-                    onExpandDrawer = { showShortcutDrawer = true }
-                )
+                if (!isImeVisible) {
+                    BottomShortcutDock(
+                        pinnedApps = pinnedShortcutApps,
+                        onLaunchApp = viewModel::launchInstalledApp,
+                        onExpandDrawer = { showShortcutDrawer = true }
+                    )
+                }
             }
         ) { innerPadding ->
             Box(
                 modifier = Modifier
                     .fillMaxSize()
                     .padding(innerPadding)
+                    .consumeWindowInsets(innerPadding)
+                    .imePadding()
                     .homeScreenGestures(
                         onDoubleTapScreenOff = onDoubleTapScreenOff,
                         onSwipeLeftGoogleSearch = viewModel::openGoogleSearch
@@ -849,10 +740,18 @@ fun NephoApp(
                             onSearchQueryChange = viewModel::updateAppSearchQuery,
                             onJumpToLetter = jumpToDrawerLetter,
                             onLaunchApp = viewModel::launchInstalledApp,
-                            onTogglePin = viewModel::togglePinnedShortcut
+                            onTogglePin = viewModel::togglePinnedShortcut,
+                            onSearchFocusChanged = { focused ->
+                                isAppSearchFocused = focused
+                                if (focused) scrollAppSearchToTop()
+                            }
                         )
                         item(key = "landscape_left_bottom_spacer") {
-                            Spacer(Modifier.height(16.dp))
+                            Spacer(
+                                Modifier.height(
+                                    if (isAppSearchElevated || isImeVisible) searchRunwayHeight else 16.dp
+                                )
+                            )
                         }
                     }
 
@@ -878,8 +777,6 @@ fun NephoApp(
                             PulseTab.FEED -> {
                                 feedSectionItems(
                                     notifications = notifications,
-                                    sessionOpenedAt = sessionOpenedAt,
-                                    searchQuery = searchQuery,
                                     selectedAppFilter = selectedAppFilter,
                                     unreadOnly = unreadOnly,
                                     hasLinksOnly = hasLinksOnly,
@@ -889,7 +786,6 @@ fun NephoApp(
                                     isNotificationAccessGranted = isNotificationAccessGranted,
                                     timeFormatter = timeFmt,
                                     collapsedGroups = collapsedGroups,
-                                    onSearchQueryChange = viewModel::updateSearchQuery,
                                     onSelectAppFilter = viewModel::selectAppFilter,
                                     onToggleUnreadOnly = viewModel::toggleUnreadOnly,
                                     onToggleHasLinksOnly = viewModel::toggleHasLinksOnly,
@@ -996,8 +892,6 @@ fun NephoApp(
                             PulseTab.FEED -> {
                                 feedSectionItems(
                                     notifications = notifications,
-                                    sessionOpenedAt = sessionOpenedAt,
-                                    searchQuery = searchQuery,
                                     selectedAppFilter = selectedAppFilter,
                                     unreadOnly = unreadOnly,
                                     hasLinksOnly = hasLinksOnly,
@@ -1007,7 +901,6 @@ fun NephoApp(
                                     isNotificationAccessGranted = isNotificationAccessGranted,
                                     timeFormatter = timeFmt,
                                     collapsedGroups = collapsedGroups,
-                                    onSearchQueryChange = viewModel::updateSearchQuery,
                                     onSelectAppFilter = viewModel::selectAppFilter,
                                     onToggleUnreadOnly = viewModel::toggleUnreadOnly,
                                     onToggleHasLinksOnly = viewModel::toggleHasLinksOnly,
@@ -1057,17 +950,103 @@ fun NephoApp(
                             onSearchQueryChange = viewModel::updateAppSearchQuery,
                             onJumpToLetter = jumpToDrawerLetter,
                             onLaunchApp = viewModel::launchInstalledApp,
-                            onTogglePin = viewModel::togglePinnedShortcut
+                            onTogglePin = viewModel::togglePinnedShortcut,
+                            onSearchFocusChanged = { focused ->
+                                isAppSearchFocused = focused
+                                if (focused) scrollAppSearchToTop()
+                            }
                         )
 
                         item(key = "portrait_bottom_spacer") {
-                            Spacer(Modifier.height(20.dp))
+                            Spacer(
+                                Modifier.height(
+                                    if (isAppSearchElevated || isImeVisible) searchRunwayHeight else 20.dp
+                                )
+                            )
                         }
                     }
                 }
             }
             }
         }
+    }
+}
+
+@Composable
+fun NephoHeaderTitle(
+    versionName: String,
+    listenerHealth: ListenerHealthState,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val healthDotColor = when {
+        !listenerHealth.isAccessGranted -> CrimsonError
+        listenerHealth.isListenerConnected -> EmeraldOk
+        else -> AmberSignal
+    }
+    Column(
+        verticalArrangement = Arrangement.spacedBy(1.dp),
+        modifier = modifier
+            .clip(RoundedCornerShape(8.dp))
+            .clickable(onClick = onClick)
+            .padding(vertical = 2.dp)
+            .testTag("top_bar_brand_area")
+    ) {
+        Row(
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Image(
+                painter = painterResource(R.drawable.nepho_mark),
+                contentDescription = stringResource(R.string.app_name),
+                contentScale = ContentScale.Crop,
+                modifier = Modifier
+                    .size(26.dp)
+                    .clip(RoundedCornerShape(7.dp))
+                    .testTag("top_bar_nepho_logo")
+            )
+            Text(
+                text = stringResource(R.string.app_name),
+                style = MaterialTheme.typography.titleLarge.copy(fontWeight = FontWeight.Bold),
+                color = MaterialTheme.colorScheme.onBackground,
+                maxLines = 1,
+                softWrap = false,
+                modifier = Modifier.testTag("top_bar_title")
+            )
+            Surface(
+                shape = RoundedCornerShape(6.dp),
+                color = MidnightSurface,
+                border = BorderStroke(1.dp, BorderHairline)
+            ) {
+                Text(
+                    text = stringResource(R.string.app_version_short, versionName),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = CyanPulse,
+                    maxLines = 1,
+                    softWrap = false,
+                    modifier = Modifier
+                        .padding(horizontal = 6.dp, vertical = 2.dp)
+                        .testTag("top_bar_version")
+                )
+            }
+            Box(
+                modifier = Modifier
+                    .size(8.dp)
+                    .clip(CircleShape)
+                    .background(healthDotColor)
+                    .testTag("top_bar_health_dot")
+            )
+        }
+        Text(
+            text = stringResource(R.string.app_header_tagline),
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+            maxLines = 1,
+            softWrap = false,
+            modifier = Modifier
+                .padding(start = 34.dp)
+                .testTag("top_bar_tagline")
+        )
     }
 }
 

@@ -35,11 +35,17 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.foundation.lazy.LazyColumn
+import com.example.launcher.LauncherAppCatalog
 import com.example.ui.HomeCalendarCard
 import com.example.ui.HomeClockCard
 import com.example.ui.HomeMusicCard
+import com.example.ui.LinksVaultTab
+import com.example.ui.ListenerHealthState
 import com.example.ui.MusicServicePickerDialog
+import com.example.ui.NephoHeaderTitle
 import com.example.ui.QuickAlarmDialog
+import com.example.ui.appDrawerSectionItems
 import com.example.ui.homeScreenGestures
 import com.example.ui.ThreadPopupDialog
 import com.example.ui.WeatherSetupDialog
@@ -85,8 +91,6 @@ class ChromeOsUiTest {
             NephoTheme {
                 FeedTab(
                     notifications = notifications.value,
-                    sessionOpenedAt = 0,
-                    searchQuery = "",
                     selectedAppFilter = selected.value,
                     unreadOnly = false,
                     hasLinksOnly = false,
@@ -94,7 +98,6 @@ class ChromeOsUiTest {
                     bannerDismissed = true,
                     hasNotificationPermission = true,
                     isNotificationAccessGranted = true,
-                    onSearchQueryChange = {},
                     onSelectAppFilter = { selected.value = it },
                     onToggleUnreadOnly = {},
                     onToggleHasLinksOnly = {},
@@ -119,6 +122,7 @@ class ChromeOsUiTest {
             }
         }
 
+        composeRule.onNodeWithTag("feed_search_input").assertDoesNotExist()
         composeRule.onNodeWithTag("empty_feed_card").assertDoesNotExist()
         composeRule.onNodeWithTag("selected_app_link").assertDoesNotExist()
         composeRule.onNodeWithTag("filter_chip_gmail").performClick()
@@ -589,6 +593,100 @@ class ChromeOsUiTest {
         }
         composeRule.runOnIdle {
             assertEquals(1, screenOffCount)
+        }
+    }
+
+    @Test
+    fun `two-line NephoHeaderTitle shows full app name, full version number, and mental clarity tagline`() {
+        var brandClicks = 0
+        composeRule.setContent {
+            NephoTheme {
+                NephoHeaderTitle(
+                    versionName = "2.14.3",
+                    listenerHealth = ListenerHealthState(
+                        isAccessGranted = true,
+                        isListenerConnected = true
+                    ),
+                    onClick = { brandClicks++ }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("top_bar_title", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("Nepho")
+        composeRule.onNodeWithTag("top_bar_version", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("v2.14.3")
+        composeRule.onNodeWithTag("top_bar_tagline", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("mental clarity")
+        composeRule.onNodeWithTag("session_status_pill").assertDoesNotExist()
+
+        composeRule.onNodeWithTag("top_bar_brand_area").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, brandClicks)
+        }
+    }
+
+    @Test
+    fun `LinksVaultTab keeps search bar and app drawer search notifies focus and filters apps`() {
+        val vaultQuery = mutableStateOf("")
+        val appQuery = mutableStateOf("")
+        var searchFocusedCount = 0
+        val apps = listOf(
+            LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C"),
+            LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S"),
+            LauncherAppInfo("com.google.android.calendar", "Main", "Calendar", "C")
+        )
+
+        composeRule.setContent {
+            NephoTheme {
+                val grouped = LauncherAppCatalog.groupAlphabetically(
+                    LauncherAppCatalog.filterApps(apps, appQuery.value)
+                )
+                androidx.compose.foundation.layout.Column {
+                    LinksVaultTab(
+                        links = emptyList(),
+                        searchQuery = vaultQuery.value,
+                        onSearchQueryChange = { vaultQuery.value = it },
+                        onToggleLinkStar = { _, _ -> },
+                        modifier = Modifier.weight(1f)
+                    )
+                    LazyColumn(modifier = Modifier.weight(1f)) {
+                        appDrawerSectionItems(
+                            totalInstalledCount = apps.size,
+                            searchQuery = appQuery.value,
+                            groupedApps = grouped,
+                            pinnedPackages = emptySet(),
+                            onSearchQueryChange = { appQuery.value = it },
+                            onJumpToLetter = {},
+                            onLaunchApp = {},
+                            onTogglePin = {},
+                            onSearchFocusChanged = { focused ->
+                                if (focused) searchFocusedCount++
+                            }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Links Vault retains its search input
+        composeRule.onNodeWithTag("vault_search_input").assertIsDisplayed().performTextInput("github")
+        composeRule.runOnIdle {
+            assertEquals("github", vaultQuery.value)
+        }
+
+        // Focusing & typing in the app drawer search bar fires focus callback and narrows visible apps
+        composeRule.onNodeWithTag("app_drawer_search_input")
+            .assertIsDisplayed()
+            .performClick()
+            .performTextInput("Spot")
+        composeRule.onNodeWithTag("drawer_app_row_com.spotify.music").assertIsDisplayed()
+        composeRule.onNodeWithTag("drawer_app_row_com.android.chrome").assertDoesNotExist()
+        composeRule.runOnIdle {
+            assertTrue(searchFocusedCount >= 1)
         }
     }
 }

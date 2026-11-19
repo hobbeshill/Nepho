@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.ExpandLess
 import androidx.compose.material.icons.filled.ExpandMore
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.NotificationsActive
-import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AlarmAdd
 import androidx.compose.material.icons.outlined.DeleteSweep
@@ -52,8 +51,6 @@ import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.SwipeToDismissBox
 import androidx.compose.material3.SwipeToDismissBoxValue
@@ -97,8 +94,6 @@ import java.util.Locale
 @Composable
 fun FeedTab(
     notifications: List<PulseNotificationItem>,
-    sessionOpenedAt: Long,
-    searchQuery: String,
     selectedAppFilter: SupportedApp?,
     unreadOnly: Boolean,
     hasLinksOnly: Boolean,
@@ -106,7 +101,6 @@ fun FeedTab(
     bannerDismissed: Boolean,
     hasNotificationPermission: Boolean,
     isNotificationAccessGranted: Boolean,
-    onSearchQueryChange: (String) -> Unit,
     onSelectAppFilter: (SupportedApp?) -> Unit,
     onToggleUnreadOnly: () -> Unit,
     onToggleHasLinksOnly: () -> Unit,
@@ -141,8 +135,6 @@ fun FeedTab(
     ) {
         feedSectionItems(
             notifications = notifications,
-            sessionOpenedAt = sessionOpenedAt,
-            searchQuery = searchQuery,
             selectedAppFilter = selectedAppFilter,
             unreadOnly = unreadOnly,
             hasLinksOnly = hasLinksOnly,
@@ -152,7 +144,6 @@ fun FeedTab(
             isNotificationAccessGranted = isNotificationAccessGranted,
             timeFormatter = timeFormatter,
             collapsedGroups = collapsedGroups,
-            onSearchQueryChange = onSearchQueryChange,
             onSelectAppFilter = onSelectAppFilter,
             onToggleUnreadOnly = onToggleUnreadOnly,
             onToggleHasLinksOnly = onToggleHasLinksOnly,
@@ -179,8 +170,6 @@ fun FeedTab(
 
 fun LazyListScope.feedSectionItems(
     notifications: List<PulseNotificationItem>,
-    sessionOpenedAt: Long,
-    searchQuery: String,
     selectedAppFilter: SupportedApp?,
     unreadOnly: Boolean,
     hasLinksOnly: Boolean,
@@ -190,7 +179,6 @@ fun LazyListScope.feedSectionItems(
     isNotificationAccessGranted: Boolean,
     timeFormatter: SimpleDateFormat,
     collapsedGroups: MutableMap<String, Boolean>,
-    onSearchQueryChange: (String) -> Unit,
     onSelectAppFilter: (SupportedApp?) -> Unit,
     onToggleUnreadOnly: () -> Unit,
     onToggleHasLinksOnly: () -> Unit,
@@ -227,47 +215,6 @@ fun LazyListScope.feedSectionItems(
 
         item(key = "search_and_filters") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
-                OutlinedTextField(
-                    value = searchQuery,
-                    onValueChange = onSearchQueryChange,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("feed_search_input"),
-                    placeholder = {
-                        Text(
-                            text = stringResource(R.string.search_feed_hint),
-                            style = MaterialTheme.typography.bodyMedium
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Search,
-                            contentDescription = "Search notifications"
-                        )
-                    },
-                    trailingIcon = {
-                        if (searchQuery.isNotEmpty()) {
-                            IconButton(
-                                onClick = { onSearchQueryChange("") },
-                                modifier = Modifier.testTag("clear_feed_search_button")
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = "Clear search"
-                                )
-                            }
-                        }
-                    },
-                    singleLine = true,
-                    shape = RoundedCornerShape(14.dp),
-                    colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MidnightSurface,
-                        unfocusedContainerColor = MidnightSurface,
-                        focusedBorderColor = CyanPulse,
-                        unfocusedBorderColor = BorderHairline
-                    )
-                )
-
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
