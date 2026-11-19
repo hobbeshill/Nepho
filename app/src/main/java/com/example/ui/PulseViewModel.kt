@@ -11,6 +11,7 @@ import com.example.data.PulseRepository
 import com.example.data.SessionMetrics
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
+import com.example.data.UndoDismissBatch
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
 import com.example.worker.RetentionPurgeWorker
@@ -32,6 +33,12 @@ enum class PulseTab {
     FEED,
     LINKS_VAULT
 }
+
+data class SnackbarEvent(
+    val message: String,
+    val actionLabel: String? = null,
+    val onAction: (() -> Unit)? = null
+)
 
 class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
@@ -68,8 +75,16 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     )
     val isNotificationAccessGranted: StateFlow<Boolean> = _isNotificationAccessGranted.asStateFlow()
 
-    private val _snackbarEvents = MutableSharedFlow<String>(extraBufferCapacity = 8)
-    val snackbarEvents: SharedFlow<String> = _snackbarEvents.asSharedFlow()
+    private val _snackbarEvents = MutableSharedFlow<SnackbarEvent>(extraBufferCapacity = 8)
+    val snackbarEvents: SharedFlow<SnackbarEvent> = _snackbarEvents.asSharedFlow()
+
+    private fun emitSnackbar(
+        message: String,
+        actionLabel: String? = null,
+        onAction: (() -> Unit)? = null
+    ) {
+        _snackbarEvents.tryEmit(SnackbarEvent(message, actionLabel, onAction))
+    }
 
     val sessionOpenedAt: StateFlow<Long> = repository.sessionPreferences.sessionOpenedAtFlow
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), System.currentTimeMillis())
@@ -188,7 +203,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 delay(60_000L)
                 val purged = repository.purgeExpired()
                 if (purged > 0) {
-                    _snackbarEvents.tryEmit("24h rolling window purged $purged expired entries.")
+                    emitSnackbar("24h rolling window purged $purged expired entries.")
                 }
             }
         }
@@ -228,6 +243,19 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun toggleNotificationStarFromSwipe(key: String) {
+        viewModelScope.launch {
+            val isNowStarred = repository.toggleNotificationStar(key)
+            emitSnackbar(
+                if (isNowStarred) {
+                    "Starred • Protected from swipe dismiss and 24h purge."
+                } else {
+                    "Star removed."
+                }
+            )
+        }
+    }
+
     fun toggleLinkStar(linkId: String, currentlyStarred: Boolean) {
         viewModelScope.launch {
             repository.toggleLinkStar(linkId, currentlyStarred)
@@ -239,7 +267,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             repository.scheduleReminder(key, triggerAtMillis, note)
             // Only surface a message when the reminder can't actually alert the user
             if (!LocalPulseNotifier.hasNotificationPermission(getApplication())) {
-                _snackbarEvents.tryEmit("Reminder saved, but enable Local Alerts to receive its push notification.")
+                emitSnackbar("Reminder saved, but enable Local Alerts to receive its push notification.")
             }
         }
     }
@@ -269,7 +297,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             repository.sessionPreferences.setLocalAlertsEnabled(granted)
         }
         if (granted) {
-            _snackbarEvents.tryEmit("Nepho shade alerts enabled.")
+            emitSnackbar("Nepho shade alerts enabled.")
         }
     }
 
@@ -286,13 +314,13 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 ShadeMode.BLOCKED -> {
                     // Immediately clear anything the blocked app already has in the shade
                     NephoNotificationListener.cancelActiveNotificationsForPackage(packageName)
-                    _snackbarEvents.tryEmit(
+                    emitSnackbar(
                         "App blocked in Nepho. Opening system settings so you can turn its notifications off there too."
                     )
                     openSystemNotificationSettings(packageName)
                 }
                 ShadeMode.SILENT -> {
-                    _snackbarEvents.tryEmit(
+                    emitSnackbar(
                         "App silenced in Nepho (feed only). Opening system settings so you can mark it Silent there too."
                     )
                     openSystemNotificationSettings(packageName)
@@ -325,7 +353,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             ctx.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Failed to open system notification settings for $packageName", e)
-            _snackbarEvents.tryEmit("Couldn't open system notification settings for this app.")
+            emitSnackbar("Couldn't open system notification settings for this app.")
         }
     }
 
@@ -385,7 +413,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             } else {
                 ""
             }
-            _snackbarEvents.tryEmit("Captured ${app.displayName} item$linkMsg.")
+            emitSnackbar("Captured ${app.displayName} item$linkMsg.")
         }
     }
 
@@ -407,6 +435,60 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun dismissNotificationWithUndo(key: String) {
+        viewModelScope.launch {
+            val batch = repository.dismissNotificationWithUndo(key) ?: return@launch
+            emitSnackbar(
+                message = "Alert dismissed",
+                actionLabel = "Undo",
+                onAction = { restoreDismissedBatch(batch) }
+            )
+        }
+    }
+
+    fun notifyStarredSwipeProtected() {
+        emitSnackbar("Starred alert is protected. Swipe left to unstar first.")
+    }
+
+    fun markAppGroupAsRead(packageName: String, appLabel: String) {
+        viewModelScope.launch {
+            val updated = repository.markPackageAsRead(packageName)
+            if (updated > 0) {
+                emitSnackbar("Marked $updated $appLabel alert${if (updated == 1) "" else "s"} as read.")
+            }
+        }
+    }
+
+    fun clearAppGroupWithUndo(packageName: String, appLabel: String) {
+        viewModelScope.launch {
+            val batch = repository.dismissUnstarredForPackageWithUndo(packageName)
+            when {
+                batch.items.isNotEmpty() -> {
+                    val count = batch.items.size
+                    val starredSuffix = if (batch.keptStarredCount > 0) {
+                        " (${batch.keptStarredCount} starred kept)"
+                    } else {
+                        ""
+                    }
+                    emitSnackbar(
+                        message = "Cleared $count $appLabel alert${if (count == 1) "" else "s"}$starredSuffix",
+                        actionLabel = "Undo",
+                        onAction = { restoreDismissedBatch(batch) }
+                    )
+                }
+                batch.keptStarredCount > 0 -> {
+                    emitSnackbar("All $appLabel alerts are starred and protected.")
+                }
+            }
+        }
+    }
+
+    private fun restoreDismissedBatch(batch: UndoDismissBatch) {
+        viewModelScope.launch {
+            repository.restoreDismissedBatch(batch)
+        }
+    }
+
     fun executeSecondaryAction(key: String, actionLabel: String) {
         viewModelScope.launch {
             repository.executeSecondaryAction(key, actionLabel)
@@ -422,7 +504,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     fun openSourceApp(item: PulseNotificationItem) {
         if (!repository.openSourceConversation(item.key)) {
-            _snackbarEvents.tryEmit(
+            emitSnackbar(
                 "The original ${item.appLabel} conversation is no longer available. Open it in ${item.appLabel}."
             )
         }
@@ -437,7 +519,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             _starredOnly.value = false
             _searchQuery.value = ""
             _vaultSearchQuery.value = ""
-            _snackbarEvents.tryEmit("Session reset. Starred items preserved; 24h window restarted.")
+            emitSnackbar("Session reset. Starred items preserved; 24h window restarted.")
         }
     }
 

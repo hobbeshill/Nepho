@@ -308,6 +308,10 @@ class ExampleRobolectricTest {
         assertEquals("starred_old_test", activeAfterReset.first().key)
         assertTrue(activeAfterReset.first().isStarred)
         assertTrue(linksAfterReset.any { it.domain == "expired.example.com" && it.isStarred })
+
+        // Clean up starred test record so subsequent tests start with a clean DB
+        repo.toggleNotificationStar("starred_old_test")
+        repo.resetSession()
     }
 
     @Test
@@ -444,4 +448,99 @@ class ExampleRobolectricTest {
         // Already dismissed entries are not re-processed
         assertEquals(false, repo.syncDismissalFromSystem("sync_test_key"))
     }
+
+    @Test
+    fun `single notification dismiss with undo restores alert reminder and conversation intent`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        val futureReminderAt = now + 30 * 60 * 1000L
+        ingest(
+            repo = repo,
+            key = "undo_single_key",
+            app = SupportedApp.MESSAGES,
+            title = "Alex",
+            body = "Call me after 4 PM",
+            postTime = now,
+            canReply = true
+        )
+        repo.scheduleReminder("undo_single_key", futureReminderAt, "Call back")
+        val contentIntent = PendingIntent.getActivity(
+            context,
+            303,
+            Intent(context, MainActivity::class.java).setData(Uri.parse("test://conversation/undo_single")),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        repo.registerContentIntent("undo_single_key", contentIntent)
+
+        val batch = repo.dismissNotificationWithUndo("undo_single_key")
+        assertNotNull(batch)
+        assertEquals(1, batch!!.items.size)
+        assertTrue(repo.activeNotificationsFlow.first().none { it.key == "undo_single_key" })
+
+        val restoredCount = repo.restoreDismissedBatch(batch)
+        assertEquals(1, restoredCount)
+
+        val restored = repo.activeNotificationsFlow.first().first { it.key == "undo_single_key" }
+        assertFalse(restored.isDismissed)
+        assertEquals(futureReminderAt, restored.reminderAt)
+        assertEquals("Call back", restored.reminderNote)
+        assertTrue(repo.openSourceConversation("undo_single_key"))
+    }
+
+    @Test
+    fun `group clear dismisses only unstarred items for target package and undo restores them`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        ingest(repo, "ts_u1", SupportedApp.TEAMSNAP, "Schedule", "Practice at 5pm", now)
+        ingest(repo, "ts_u2", SupportedApp.TEAMSNAP, "Snack Duty", "Bring oranges", now + 1)
+        ingest(repo, "ts_star", SupportedApp.TEAMSNAP, "Coach", "Tournament bracket", now + 2)
+        repo.toggleNotificationStar("ts_star")
+        ingest(repo, "outlook_u1", SupportedApp.OUTLOOK, "HR", "Benefits reminder", now + 3)
+
+        try {
+            val batch = repo.dismissUnstarredForPackageWithUndo(SupportedApp.TEAMSNAP.packageName)
+            assertEquals(2, batch.items.size)
+            assertEquals(1, batch.keptStarredCount)
+
+            val remainingKeys = repo.activeNotificationsFlow.first().map { it.key }.toSet()
+            assertTrue("ts_star" in remainingKeys)
+            assertTrue("outlook_u1" in remainingKeys)
+            assertFalse("ts_u1" in remainingKeys)
+            assertFalse("ts_u2" in remainingKeys)
+
+            repo.restoreDismissedBatch(batch)
+            val restoredKeys = repo.activeNotificationsFlow.first().map { it.key }.toSet()
+            assertTrue(setOf("ts_u1", "ts_u2", "ts_star", "outlook_u1").all { it in restoredKeys })
+        } finally {
+            repo.toggleNotificationStar("ts_star")
+            repo.resetSession()
+        }
+    }
+
+    @Test
+    fun `mark package as read updates only active alerts in target package`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        ingest(repo, "msg_1", SupportedApp.MESSAGES, "Sam", "Hello", now)
+        ingest(repo, "msg_2", SupportedApp.MESSAGES, "Pat", "On my way", now + 1)
+        ingest(repo, "gmail_1", SupportedApp.GMAIL, "Receipts", "Order confirmed", now + 2)
+
+        val updatedCount = repo.markPackageAsRead(SupportedApp.MESSAGES.packageName)
+        assertEquals(2, updatedCount)
+
+        val active = repo.activeNotificationsFlow.first().associateBy { it.key }
+        assertTrue(active["msg_1"]!!.isRead)
+        assertTrue(active["msg_2"]!!.isRead)
+        assertFalse(active["gmail_1"]!!.isRead)
+    }
 }
+
