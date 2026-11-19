@@ -15,6 +15,7 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
@@ -39,6 +40,7 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -66,9 +68,9 @@ fun ComposeCaptureDialog(
     onDismiss: () -> Unit,
     onSubmit: (SupportedApp, String, String) -> Unit
 ) {
-    var selectedApp by remember { mutableStateOf(SupportedApp.OUTLOOK) }
-    var title by remember { mutableStateOf("") }
-    var body by remember { mutableStateOf("") }
+    var selectedApp by rememberSaveable { mutableStateOf(SupportedApp.OUTLOOK) }
+    var title by rememberSaveable { mutableStateOf("") }
+    var body by rememberSaveable { mutableStateOf("") }
 
     AlertDialog(
         onDismissRequest = onDismiss,
@@ -79,7 +81,10 @@ fun ComposeCaptureDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -184,7 +189,10 @@ fun SetReminderDialog(
             )
         },
         text = {
-            Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(10.dp)
+            ) {
                 Text(
                     text = "${item.appLabel} • ${item.title}",
                     style = MaterialTheme.typography.labelMedium,
@@ -397,6 +405,7 @@ fun ShadePreferencesDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
                         .heightIn(max = 280.dp),
                     verticalArrangement = Arrangement.spacedBy(10.dp)
                 ) {

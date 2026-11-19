@@ -60,6 +60,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -109,10 +110,10 @@ fun NephoApp(
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
-    var showComposeDialog by remember { mutableStateOf(false) }
-    var showShadePrefsDialog by remember { mutableStateOf(false) }
+    var showComposeDialog by rememberSaveable { mutableStateOf(false) }
+    var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
-    var threadTargetId by remember { mutableStateOf<String?>(null) }
+    var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     LaunchedEffect(Unit) {

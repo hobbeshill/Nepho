@@ -95,7 +95,7 @@ fun ThreadPopupDialog(
     val app = latest.supportedApp
     val timeFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
     var replyDraft by rememberSaveable(latest.threadId) { mutableStateOf("") }
-    var gifAttachment by remember(replyTarget?.key) { mutableStateOf<Uri?>(null) }
+    var gifAttachment by rememberSaveable(replyTarget?.key) { mutableStateOf<Uri?>(null) }
     val gifPicker = rememberLauncherForActivityResult(
         contract = ActivityResultContracts.GetContent()
     ) { uri ->
@@ -189,6 +189,7 @@ fun ThreadPopupDialog(
                 LazyColumn(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .weight(1f, fill = false)
                         .heightIn(max = 380.dp)
                         .testTag("thread_message_list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)

@@ -7,6 +7,7 @@
     <string name="action_more_options">More options</string>
     <string name="action_compose_capture">Add Custom Capture</string>
     <string name="listener_service_name">Nepho Notification Interceptor</string>
+    <string name="notification_access_settings_unavailable">Notification access settings are unavailable on this device. Notification capture requires notification access.</string>
     <string name="banner_title">Eliminate Duplicate Notifications</string>
     <string name="banner_body">Grant Notification Access so Nepho can capture incoming alerts from all apps, cancel duplicate system notifications automatically, and route them silently to your Feed or as a single Nepho alert.</string>
     <string name="banner_active_title">Single-Source Interception Active</string>

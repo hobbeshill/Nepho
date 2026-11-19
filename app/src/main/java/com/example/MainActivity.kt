@@ -1,10 +1,13 @@
 package com.example
 
 import android.Manifest
+import android.content.ActivityNotFoundException
 import android.content.Intent
 import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
+import android.util.Log
+import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
@@ -48,7 +51,23 @@ class MainActivity : ComponentActivity() {
                         }
                     },
                     onOpenNotificationAccessSettings = {
-                        startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        try {
+                            startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+                        } catch (e: ActivityNotFoundException) {
+                            Log.w("MainActivity", "Notification access settings unavailable", e)
+                            Toast.makeText(
+                                this,
+                                R.string.notification_access_settings_unavailable,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        } catch (e: SecurityException) {
+                            Log.w("MainActivity", "Notification access settings restricted", e)
+                            Toast.makeText(
+                                this,
+                                R.string.notification_access_settings_unavailable,
+                                Toast.LENGTH_LONG
+                            ).show()
+                        }
                     }
                 )
             }
