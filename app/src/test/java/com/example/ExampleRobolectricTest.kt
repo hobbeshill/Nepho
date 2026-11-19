@@ -8,14 +8,27 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.Icon
 import android.net.Uri
+import android.os.Process
+import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.example.data.NativeReplyHandle
 import com.example.data.NotificationImageStore
 import com.example.data.PulseRepository
+import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UrlExtractor
+import com.example.notifications.NephoNotificationListener
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CoroutineStart
+import kotlinx.coroutines.async
+import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertArrayEquals
 import org.junit.Assert.assertFalse
@@ -24,10 +37,12 @@ import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
+import org.robolectric.Robolectric
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
+import java.util.UUID
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -234,6 +249,110 @@ class ExampleRobolectricTest {
     }
 
     @Test
+    fun `active feed emits new and updated notifications without restarting collection`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        val seen = Channel<String>(Channel.UNLIMITED)
+        val initialObserved = CompletableDeferred<Unit>()
+        val collector = launch {
+            repo.activeNotificationsFlow.collect { items ->
+                initialObserved.complete(Unit)
+                items.firstOrNull { it.key == "live_feed_test" }?.let { seen.send(it.body) }
+            }
+        }
+        try {
+            withTimeout(5_000) { initialObserved.await() }
+            val now = System.currentTimeMillis()
+            ingest(repo, "live_feed_test", SupportedApp.MESSAGES, "Jordan", "First", now)
+            assertEquals("First", withTimeout(5_000) { seen.receive() })
+
+            ingest(repo, "live_feed_test", SupportedApp.MESSAGES, "Jordan", "Updated", now + 1)
+            assertEquals("Updated", withTimeout(5_000) {
+                var body = seen.receive()
+                while (body != "Updated") body = seen.receive()
+                body
+            })
+        } finally {
+            collector.cancel()
+            seen.close()
+        }
+    }
+
+    @Test
+    fun `notification listener delivers new shade notifications to an active feed`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        val app = SupportedApp.MESSAGES
+        repo.sessionPreferences.setAppOptedIn(app.packageName, true)
+        repo.sessionPreferences.setAppShadeMode(app.packageName, ShadeMode.SILENT)
+        val service = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val initialObserved = CompletableDeferred<Unit>()
+        val received = async {
+            repo.activeNotificationsFlow.first { items ->
+                initialObserved.complete(Unit)
+                items.any { it.body == "New message from the shade" }
+            }
+        }
+        try {
+            withTimeout(5_000) { initialObserved.await() }
+            val notification = Notification.Builder(context, "test")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Jordan")
+                .setContentText("New message from the shade")
+                .build()
+            val sbn = StatusBarNotification(
+                app.packageName,
+                app.packageName,
+                739,
+                null,
+                Process.myUid(),
+                Process.myPid(),
+                0,
+                notification,
+                Process.myUserHandle(),
+                System.currentTimeMillis()
+            )
+            service.get().onNotificationPosted(sbn)
+            val items = withTimeout(10_000) { received.await() }
+            assertTrue(items.any { it.key == sbn.key && it.body == "New message from the shade" })
+        } finally {
+            received.cancel()
+            service.destroy()
+        }
+    }
+
+    @Test
+    fun `unrelated preference changes do not restart session cutoff observation`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = PulseRepository.getInstance(context).sessionPreferences
+        val initialTime = prefs.resetSessionOpenedAt()
+        val initialObserved = CompletableDeferred<Unit>()
+        val nextValue = async(start = CoroutineStart.UNDISPATCHED) {
+            var first = true
+            prefs.sessionOpenedAtFlow.first { value ->
+                if (first) {
+                    first = false
+                    initialObserved.complete(Unit)
+                    false
+                } else {
+                    true
+                }
+            }
+        }
+        try {
+            withTimeout(5_000) { initialObserved.await() }
+            prefs.recordObservedApp("com.example.livefeed.${UUID.randomUUID()}", "Live Feed")
+            assertEquals(null, withTimeoutOrNull(300) { nextValue.await() })
+            prefs.resetSessionOpenedAt(initialTime + 1)
+            assertEquals(initialTime + 1, withTimeout(5_000) { nextValue.await() })
+        } finally {
+            nextValue.cancel()
+        }
+    }
+
+    @Test
     fun `repository enforces 24h rolling purge on expired notifications and links`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = PulseRepository.getInstance(context)
@@ -398,6 +517,97 @@ class ExampleRobolectricTest {
         assertTrue(entity!!.isDismissed)
         assertTrue(entity.repliesJson.contains("On my way!"))
         assertTrue(repo.activeNotificationsFlow.first().none { it.key == "reply_test_key" })
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun `gif replies require destination support and deliver the selected uri`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        val now = System.currentTimeMillis()
+        val intent = Intent(context, MainActivity::class.java)
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            210,
+            intent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        val remoteInput = android.app.RemoteInput.Builder("reply")
+            .setAllowDataType("image/gif", true)
+            .build()
+
+        repo.registerNativeActionHandle(
+            "gif_reply_test_key",
+            NativeReplyHandle(
+                replyPendingIntent = pendingIntent,
+                frameworkRemoteInputs = arrayOf(remoteInput)
+            )
+        )
+        ingest(
+            repo = repo,
+            key = "gif_reply_test_key",
+            app = SupportedApp.MESSAGES,
+            title = "Jordan",
+            body = "Send a GIF",
+            postTime = now,
+            canReply = true
+        )
+
+        assertTrue(repo.canSendGifReply("gif_reply_test_key"))
+        val gifUri = Uri.parse("content://com.example.test/gifs/reaction.gif")
+        assertTrue(repo.sendInlineReply("gif_reply_test_key", "", gifUri))
+
+        val sentIntent = shadowOf(context as android.app.Application).nextStartedActivity
+        assertEquals(
+            gifUri,
+            android.app.RemoteInput.getDataResultsFromIntent(sentIntent, "reply")
+                ?.get("image/gif")
+        )
+        assertTrue(repo.getNotificationByKey("gif_reply_test_key")!!.isDismissed)
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun `gif replies are rejected when destination only supports text`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        val key = "text_only_reply_test_key"
+        val pendingIntent = PendingIntent.getActivity(
+            context,
+            211,
+            Intent(context, MainActivity::class.java),
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
+        )
+        repo.registerNativeActionHandle(
+            key,
+            NativeReplyHandle(
+                replyPendingIntent = pendingIntent,
+                frameworkRemoteInputs = arrayOf(
+                    android.app.RemoteInput.Builder("reply").build()
+                )
+            )
+        )
+        ingest(
+            repo = repo,
+            key = key,
+            app = SupportedApp.MESSAGES,
+            title = "Jordan",
+            body = "Text only",
+            postTime = System.currentTimeMillis(),
+            canReply = true
+        )
+
+        assertFalse(repo.canSendGifReply(key))
+        assertFalse(
+            repo.sendInlineReply(
+                key,
+                "",
+                Uri.parse("content://com.example.test/gifs/reaction.gif")
+            )
+        )
+        assertFalse(repo.getNotificationByKey(key)!!.isDismissed)
     }
 
     @Test

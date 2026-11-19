@@ -174,6 +174,8 @@ fun NephoApp(
             onOpenApp = viewModel::openSourceApp,
             onToggleStar = viewModel::toggleNotificationStar,
             onOpenReminderDialog = { item -> reminderTargetItem = item },
+            canReplyWithGif = threadItems.lastOrNull { it.canReply }
+                ?.let { viewModel.canSendGifReply(it.key) } == true,
             onSendReply = viewModel::sendInlineReply,
             onDismissThread = { keys -> keys.forEach { viewModel.dismissNotification(it) } },
             onSecondaryAction = viewModel::executeSecondaryAction

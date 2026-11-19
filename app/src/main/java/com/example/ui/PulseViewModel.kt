@@ -1,6 +1,7 @@
 package com.example.ui
 
 import android.app.Application
+import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
@@ -395,9 +396,15 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun sendInlineReply(key: String, replyText: String) {
+    fun canSendGifReply(key: String): Boolean =
+        repository.canSendGifReply(key)
+
+    fun sendInlineReply(key: String, replyText: String, gifUri: Uri? = null) {
         viewModelScope.launch {
-            repository.sendInlineReply(key, replyText)
+            val sent = repository.sendInlineReply(key, replyText, gifUri)
+            if (gifUri != null && !sent) {
+                _snackbarEvents.tryEmit("Couldn't send the GIF. Try opening the conversation in its app.")
+            }
         }
     }
 

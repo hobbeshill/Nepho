@@ -1,5 +1,8 @@
 package com.example.ui
 
+import android.net.Uri
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -26,6 +29,7 @@ import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AlarmOn
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.Star
+import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AlarmAdd
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
@@ -80,7 +84,8 @@ fun ThreadPopupDialog(
     onOpenApp: (PulseNotificationItem) -> Unit,
     onToggleStar: (String) -> Unit,
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
-    onSendReply: (String, String) -> Unit,
+    canReplyWithGif: Boolean,
+    onSendReply: (String, String, Uri?) -> Unit,
     onDismissThread: (List<String>) -> Unit,
     onSecondaryAction: (String, String) -> Unit
 ) {
@@ -90,6 +95,12 @@ fun ThreadPopupDialog(
     val app = latest.supportedApp
     val timeFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
     var replyDraft by rememberSaveable(latest.threadId) { mutableStateOf("") }
+    var gifAttachment by remember(replyTarget?.key) { mutableStateOf<Uri?>(null) }
+    val gifPicker = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.GetContent()
+    ) { uri ->
+        gifAttachment = uri
+    }
 
     Dialog(onDismissRequest = onDismissRequest) {
         Surface(
@@ -262,6 +273,31 @@ fun ThreadPopupDialog(
                 }
 
                 if (replyTarget != null) {
+                    if (gifAttachment != null) {
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.SpaceBetween,
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Text(
+                                text = stringResource(R.string.gif_attached),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = CyanPulse
+                            )
+                            IconButton(
+                                onClick = { gifAttachment = null },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("thread_remove_gif_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.action_remove_gif),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                        }
+                    }
                     Row(
                         modifier = Modifier.fillMaxWidth(),
                         horizontalArrangement = Arrangement.spacedBy(8.dp),
@@ -288,14 +324,29 @@ fun ThreadPopupDialog(
                                 unfocusedBorderColor = BorderHairline
                             )
                         )
+                        if (canReplyWithGif) {
+                            IconButton(
+                                onClick = { gifPicker.launch("image/gif") },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("thread_attach_gif_button")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Outlined.Image,
+                                    contentDescription = stringResource(R.string.action_attach_gif),
+                                    tint = CyanPulse
+                                )
+                            }
+                        }
                         Button(
                             onClick = {
-                                if (replyDraft.isNotBlank()) {
-                                    onSendReply(replyTarget.key, replyDraft)
+                                if (replyDraft.isNotBlank() || gifAttachment != null) {
+                                    onSendReply(replyTarget.key, replyDraft, gifAttachment)
                                     replyDraft = ""
+                                    gifAttachment = null
                                 }
                             },
-                            enabled = replyDraft.isNotBlank(),
+                            enabled = replyDraft.isNotBlank() || gifAttachment != null,
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
                                 .testTag("thread_send_reply_button"),

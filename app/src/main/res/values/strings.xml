@@ -26,6 +26,9 @@
     <string name="filter_has_links">Has Links</string>
     <string name="reply_placeholder">Write a reply...</string>
     <string name="action_send">Send</string>
+    <string name="action_attach_gif">Attach GIF</string>
+    <string name="action_remove_gif">Remove attached GIF</string>
+    <string name="gif_attached">GIF attached</string>
     <string name="action_dismiss">Dismiss</string>
     <string name="action_open_browser">Open in Browser</string>
     <string name="action_copy_link">Copy Link</string>

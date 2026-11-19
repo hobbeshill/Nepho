@@ -10,6 +10,7 @@ import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.data.ShadeMode
 import kotlinx.coroutines.flow.Flow
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
@@ -32,7 +33,7 @@ class SessionPreferences(private val context: Context) {
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
         prefs[Keys.SESSION_OPENED_AT] ?: 0L
-    }
+    }.distinctUntilChanged()
 
     val bannerDismissedFlow: Flow<Boolean> = context.pulseSessionDataStore.data.map { prefs ->
         prefs[Keys.BANNER_DISMISSED] ?: false

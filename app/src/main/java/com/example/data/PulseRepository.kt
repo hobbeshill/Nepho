@@ -4,6 +4,7 @@ import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import android.util.Log
@@ -20,6 +21,7 @@ import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.flatMapLatest
 import kotlinx.coroutines.flow.map
 import java.util.concurrent.ConcurrentHashMap
@@ -75,6 +77,12 @@ class PulseRepository private constructor(
         actionHandleMap[key] = handle
     }
 
+    fun canSendGifReply(key: String): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false
+        return actionHandleMap[key]?.frameworkRemoteInputs
+            ?.any { input -> input.allowedDataTypes.any(::supportsGifMimeType) } == true
+    }
+
     fun refreshRetentionTicker() {
         retentionCutoffTicker.value = computeRetentionCutoff()
     }
@@ -85,7 +93,7 @@ class PulseRepository private constructor(
         sessionPreferences.sessionOpenedAtFlow
     ) { rollingCutoff, sessionOpenedAt ->
         maxOf(rollingCutoff, sessionOpenedAt)
-    }.flatMapLatest { effectiveCutoff ->
+    }.distinctUntilChanged().flatMapLatest { effectiveCutoff ->
         dao.observeActiveNotifications(effectiveCutoff).map { entities ->
             entities.map { it.toDomain() }
         }
@@ -97,7 +105,7 @@ class PulseRepository private constructor(
         sessionPreferences.sessionOpenedAtFlow
     ) { rollingCutoff, sessionOpenedAt ->
         maxOf(rollingCutoff, sessionOpenedAt)
-    }.flatMapLatest { effectiveCutoff ->
+    }.distinctUntilChanged().flatMapLatest { effectiveCutoff ->
         dao.observeActiveLinks(effectiveCutoff).map { entities ->
             entities.map { it.toDomain() }
         }
@@ -227,24 +235,46 @@ class PulseRepository private constructor(
     suspend fun sendInlineReply(
         key: String,
         replyText: String,
+        gifUri: Uri? = null,
         fromShadeReceiver: Boolean = false
     ): Boolean {
         val trimmed = replyText.trim()
-        if (trimmed.isEmpty()) return false
+        if (trimmed.isEmpty() && gifUri == null) return false
 
         val existing = dao.getByKey(key) ?: return false
         val nativeHandle = actionHandleMap[key]
+        if (gifUri != null && (
+                Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                    gifUri.scheme != "content" ||
+                    !canSendGifReply(key)
+                )
+        ) {
+            return false
+        }
         val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
             (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
+        var dispatched = false
         if (shouldDispatchIntent && nativeHandle != null) {
             try {
                 val fillInIntent = Intent()
                 val frameworkInputs = nativeHandle.frameworkRemoteInputs
                 val compatInput = nativeHandle.compatRemoteInput
                 if (!frameworkInputs.isNullOrEmpty()) {
+                    if (gifUri != null) {
+                        frameworkInputs
+                            .filter { input -> input.allowedDataTypes.any(::supportsGifMimeType) }
+                            .forEach { input ->
+                                android.app.RemoteInput.addDataResultToIntent(
+                                    input,
+                                    fillInIntent,
+                                    mapOf(GIF_MIME_TYPE to gifUri)
+                                )
+                            }
+                        fillInIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                    }
                     val resultsBundle = Bundle().apply {
                         frameworkInputs.forEach { ri ->
-                            putCharSequence(ri.resultKey, trimmed)
+                            if (trimmed.isNotEmpty()) putCharSequence(ri.resultKey, trimmed)
                         }
                     }
                     android.app.RemoteInput.addResultsToIntent(
@@ -253,7 +283,9 @@ class PulseRepository private constructor(
                         resultsBundle
                     )
                     nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
+                    dispatched = true
                 } else if (compatInput != null) {
+                    if (gifUri != null) return false
                     val resultsBundle = Bundle().apply {
                         putCharSequence(compatInput.resultKey, trimmed)
                     }
@@ -263,14 +295,22 @@ class PulseRepository private constructor(
                         resultsBundle
                     )
                     nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
+                    dispatched = true
                 }
             } catch (_: PendingIntent.CanceledException) {
+                if (gifUri != null) return false
                 // Local intent expired; still record reply in thread
             }
         }
+        if (gifUri != null && !dispatched) return false
 
         val currentReplies = PulseJsonCodec.decodeReplies(existing.repliesJson).toMutableList()
-        currentReplies.add(ReplyEntry(text = trimmed, sentAt = System.currentTimeMillis()))
+        currentReplies.add(
+            ReplyEntry(
+                text = trimmed.ifEmpty { "GIF attachment" },
+                sentAt = System.currentTimeMillis()
+            )
+        )
         dao.updateReplies(key, PulseJsonCodec.encodeReplies(currentReplies))
         // Responding completes the alert: clear it from the feed and the shade
         dismissNotification(key)
@@ -339,6 +379,7 @@ class PulseRepository private constructor(
 
     companion object {
         const val RETENTION_WINDOW_MS = 86_400_000L
+        const val GIF_MIME_TYPE = "image/gif"
 
         @Volatile
         private var INSTANCE: PulseRepository? = null
@@ -355,6 +396,9 @@ class PulseRepository private constructor(
         }
     }
 }
+
+private fun supportsGifMimeType(mimeType: String): Boolean =
+    mimeType == PulseRepository.GIF_MIME_TYPE || mimeType == "image/*"
 
 data class IngestResult(
     val extractedLinkCount: Int,
