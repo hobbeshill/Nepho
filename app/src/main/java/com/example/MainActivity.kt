@@ -80,6 +80,7 @@ class MainActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         viewModel.refreshAccessAndPermissions()
+        viewModel.refreshLauncherState()
     }
 
     override fun onNewIntent(intent: Intent) {

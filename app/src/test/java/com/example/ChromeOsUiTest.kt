@@ -14,11 +14,18 @@ import androidx.compose.ui.test.performTextInput
 import com.example.data.CachedGifAttachment
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
+import com.example.launcher.LauncherAppInfo
+import com.example.launcher.MediaPlaybackState
+import com.example.ui.BottomShortcutDock
 import com.example.ui.ComposeCaptureDialog
 import com.example.ui.FeedTab
+import com.example.ui.HomeClockCard
+import com.example.ui.HomeMusicCard
+import com.example.ui.QuickAlarmDialog
 import com.example.ui.ThreadPopupDialog
 import com.example.ui.theme.NephoTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -187,5 +194,105 @@ class ChromeOsUiTest {
         }
         // Preview clears after sending
         composeRule.onNodeWithTag("thread_gif_preview_card").assertDoesNotExist()
+    }
+
+    @Test
+    fun `home clock card and quick alarm dialog dispatch alarm and clock actions`() {
+        val showAlarmDialog = mutableStateOf(false)
+        var scheduledAlarm: Triple<Int, Int, String?>? = null
+        var openedClockApp = false
+
+        composeRule.setContent {
+            NephoTheme {
+                HomeClockCard(
+                    nextAlarmSummary = "Thu 7:00 AM",
+                    onClick = { showAlarmDialog.value = true }
+                )
+                if (showAlarmDialog.value) {
+                    QuickAlarmDialog(
+                        onSetAlarm = { h, m, label -> scheduledAlarm = Triple(h, m, label) },
+                        onOpenClockApp = { openedClockApp = true },
+                        onDismiss = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("home_clock_alarm_pill", useUnmergedTree = true)
+            .assertTextContains("Thu 7:00 AM", substring = true)
+        composeRule.onNodeWithTag("home_clock_card").assertIsDisplayed().performClick()
+
+        composeRule.onNodeWithTag("alarm_preset_7am").performScrollTo().performClick()
+        composeRule.onNodeWithTag("alarm_label_input").performScrollTo().performTextInput("Gym")
+        composeRule.onNodeWithTag("alarm_confirm_button").performScrollTo().performClick()
+        composeRule.runOnIdle {
+            assertEquals(Triple(7, 0, "Gym"), scheduledAlarm)
+        }
+
+        composeRule.onNodeWithTag("alarm_open_clock_button").performScrollTo().performClick()
+        composeRule.runOnIdle {
+            assertTrue(openedClockApp)
+        }
+    }
+
+    @Test
+    fun `home music controls and bottom shortcut dock invoke callbacks`() {
+        var playPauseClicks = 0
+        var nextClicks = 0
+        var prevClicks = 0
+        var openMusicClicks = 0
+        var launchedDockApp: LauncherAppInfo? = null
+        var expandedDock = false
+
+        val sampleShortcuts = listOf(
+            LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C"),
+            LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S")
+        )
+
+        composeRule.setContent {
+            NephoTheme {
+                androidx.compose.foundation.layout.Column {
+                    HomeMusicCard(
+                        mediaState = MediaPlaybackState(
+                            isActive = true,
+                            isPlaying = true,
+                            title = "Midnight City",
+                            artist = "M83",
+                            appLabel = "Spotify",
+                            hasSessionAccess = true
+                        ),
+                        onTogglePlayPause = { playPauseClicks++ },
+                        onSkipPrevious = { prevClicks++ },
+                        onSkipNext = { nextClicks++ },
+                        onOpenMusicApp = { openMusicClicks++ },
+                        onGrantNotificationAccess = {}
+                    )
+                    BottomShortcutDock(
+                        pinnedApps = sampleShortcuts,
+                        onLaunchApp = { launchedDockApp = it },
+                        onExpandDrawer = { expandedDock = true }
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("music_track_title", useUnmergedTree = true)
+            .assertTextContains("Midnight City")
+        composeRule.onNodeWithTag("music_open_app_area").performClick()
+        composeRule.onNodeWithTag("music_prev_button").performClick()
+        composeRule.onNodeWithTag("music_play_pause_button").performClick()
+        composeRule.onNodeWithTag("music_next_button").performClick()
+
+        composeRule.onNodeWithTag("dock_shortcut_com.spotify.music").performClick()
+        composeRule.onNodeWithTag("dock_expand_button").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(1, openMusicClicks)
+            assertEquals(1, prevClicks)
+            assertEquals(1, playPauseClicks)
+            assertEquals(1, nextClicks)
+            assertEquals("com.spotify.music", launchedDockApp?.packageName)
+            assertTrue(expandedDock)
+        }
     }
 }

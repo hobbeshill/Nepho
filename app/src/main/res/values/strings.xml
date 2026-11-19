@@ -162,5 +162,74 @@
     <string name="updates_url_copied">GitHub Releases URL copied to clipboard.</string>
     <string name="updates_browser_unavailable">No browser available to open the download link.</string>
     <string name="updates_close">Close</string>
+
+    <!-- Home Replacement / Launcher -->
+    <string name="action_set_default_home">Set as Default Home</string>
+    <string name="default_home_active">Default Home Active</string>
+    <string name="default_home_banner_title">Use Nepho as Your Home Screen</string>
+    <string name="default_home_banner_body">Set Nepho as your default Home app so pressing Home brings you straight back here.</string>
+    <string name="default_home_settings_unavailable">Home app settings are unavailable on this device.</string>
+
+    <!-- Clock & Quick Alarm -->
+    <string name="clock_tap_hint">Tap to set alarm</string>
+    <string name="clock_no_alarm">No upcoming alarm</string>
+    <string name="clock_next_alarm_prefix">Alarm %1$s</string>
+    <string name="alarm_dialog_title">Quick Alarm</string>
+    <string name="alarm_dialog_subtitle">Set a new alarm right from Nepho or jump straight into your Clock app.</string>
+    <string name="alarm_label_hint">Alarm label (optional)</string>
+    <string name="alarm_preset_15m">+15m</string>
+    <string name="alarm_preset_30m">+30m</string>
+    <string name="alarm_preset_7am">7:00 AM</string>
+    <string name="alarm_preset_8am">8:00 AM</string>
+    <string name="alarm_action_set">Set Alarm</string>
+    <string name="alarm_action_open_clock">Open Clock &amp; Alarms</string>
+    <string name="alarm_set_success">Alarm scheduled for %1$s.</string>
+    <string name="alarm_app_unavailable">No Clock app found on this device to handle alarms.</string>
+
+    <!-- Music Controls -->
+    <string name="music_now_playing">Now Playing</string>
+    <string name="music_paused">Paused</string>
+    <string name="music_idle_title">Music Controls</string>
+    <string name="music_idle_subtitle">Nothing playing right now • Tap to open your music app</string>
+    <string name="music_access_needed">Grant Notification Access to control active music playback here</string>
+    <string name="music_action_open_app">Open Music</string>
+    <string name="music_action_previous">Previous track</string>
+    <string name="music_action_play">Play</string>
+    <string name="music_action_pause">Pause</string>
+    <string name="music_action_next">Next track</string>
+    <string name="music_app_unavailable">Couldn’t find an installed music player to open.</string>
+    <string name="music_artwork_desc">Album artwork for %1$s</string>
+
+    <!-- A-Z App Drawer -->
+    <string name="drawer_section_title">Apps</string>
+    <string name="drawer_app_count">%1$d installed</string>
+    <string name="drawer_search_hint">Search installed apps A–Z…</string>
+    <string name="drawer_clear_search">Clear app search</string>
+    <string name="drawer_empty_search">No installed apps match “%1$s”.</string>
+    <string name="drawer_empty_installed">No launchable apps detected.</string>
+    <string name="drawer_pin_shortcut">Pin to bottom dock</string>
+    <string name="drawer_unpin_shortcut">Remove from bottom dock</string>
+    <string name="drawer_pinned_toast">%1$s pinned to your shortcut drawer.</string>
+    <string name="drawer_unpinned_toast">%1$s removed from your shortcut drawer.</string>
+    <string name="drawer_pin_limit_toast">Shortcut drawer supports up to %1$d apps. Unpin one first.</string>
+
+    <!-- Bottom Shortcut Dock & Expandable Drawer -->
+    <string name="dock_expand_label">Expand shortcut drawer</string>
+    <string name="dock_drawer_title">Shortcuts &amp; Sections</string>
+    <string name="dock_jump_clock">Clock</string>
+    <string name="dock_jump_music">Music</string>
+    <string name="dock_jump_feed">Feed</string>
+    <string name="dock_jump_vault">Links Vault</string>
+    <string name="dock_jump_apps">A–Z Apps</string>
+    <string name="dock_edit_shortcuts">Edit</string>
+    <string name="dock_done_editing">Done</string>
+    <string name="dock_add_shortcut">Add App</string>
+    <string name="dock_move_left">Move earlier</string>
+    <string name="dock_move_right">Move later</string>
+    <string name="dock_remove_shortcut">Remove shortcut</string>
+    <string name="dock_empty_hint">Pin apps from the A–Z drawer or tap Add App below to customize your dock.</string>
+    <string name="dock_picker_title">Add to Shortcut Drawer</string>
+    <string name="dock_picker_search">Filter apps…</string>
+    <string name="dock_close">Close</string>
 </resources>
 

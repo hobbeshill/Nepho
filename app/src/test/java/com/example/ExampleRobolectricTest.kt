@@ -33,6 +33,10 @@ import com.example.data.local.PulseNotificationEntity
 import android.view.View
 import android.widget.FrameLayout
 import android.widget.TextView
+import android.provider.AlarmClock
+import com.example.launcher.ClockAlarmHelper
+import com.example.launcher.LauncherAppCatalog
+import com.example.launcher.LauncherAppInfo
 import com.example.notifications.NephoNotificationListener
 import com.example.ui.PulseTab
 import com.example.ui.PulseViewModel
@@ -1534,6 +1538,59 @@ class ExampleRobolectricTest {
             repoSlug = "octocat/nepho"
         )
         assertTrue(upToDate is UpdateCheckState.UpToDate)
+    }
+
+    @Test
+    fun `LauncherAppCatalog filters with prefix priority and groups alphabetically`() {
+        val sampleApps = listOf(
+            LauncherAppInfo("com.music.app", "Main", "Apple Music", "A"),
+            LauncherAppInfo("com.calc.app", "Main", "Calculator", "C"),
+            LauncherAppInfo("com.calendar.app", "Main", "Calendar", "C"),
+            LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S"),
+            LauncherAppInfo("com.num.app", "Main", "1Password", "#")
+        )
+
+        val grouped = LauncherAppCatalog.groupAlphabetically(sampleApps)
+        assertEquals(listOf("A", "C", "S", "#"), grouped.keys.toList())
+        assertEquals(2, grouped["C"]?.size)
+
+        // Prefix match ("Spotify") comes before substring match ("Apple Music" via package/name)
+        val musicFiltered = LauncherAppCatalog.filterApps(sampleApps, "music")
+        assertEquals(listOf("com.music.app", "com.spotify.music"), musicFiltered.map { it.packageName })
+
+        val calFiltered = LauncherAppCatalog.filterApps(sampleApps, "cal")
+        assertEquals(listOf("Calculator", "Calendar"), calFiltered.map { it.label })
+
+        val seeded = LauncherAppCatalog.seedDefaultShortcuts(sampleApps)
+        assertEquals(5, seeded.size)
+        assertTrue("com.spotify.music" in seeded)
+    }
+
+    @Test
+    fun `ClockAlarmHelper builds compliant SET_ALARM and SHOW_ALARMS intents`() {
+        val setIntent = ClockAlarmHelper.buildSetAlarmIntent(hour = 7, minute = 30, label = "Morning Run")
+        assertEquals(AlarmClock.ACTION_SET_ALARM, setIntent.action)
+        assertEquals(7, setIntent.getIntExtra(AlarmClock.EXTRA_HOUR, -1))
+        assertEquals(30, setIntent.getIntExtra(AlarmClock.EXTRA_MINUTES, -1))
+        assertEquals("Morning Run", setIntent.getStringExtra(AlarmClock.EXTRA_MESSAGE))
+        assertTrue(setIntent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+
+        val showIntent = ClockAlarmHelper.buildShowAlarmsIntent()
+        assertEquals(AlarmClock.ACTION_SHOW_ALARMS, showIntent.action)
+        assertTrue(showIntent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+    }
+
+    @Test
+    fun `pinned shortcuts persist across SessionPreferences updates`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = PulseRepository.getInstance(context).sessionPreferences
+
+        prefs.setPinnedShortcuts(listOf("com.android.chrome", "com.spotify.music", "com.android.chrome"))
+        assertEquals(
+            listOf("com.android.chrome", "com.spotify.music"),
+            prefs.pinnedShortcutsFlow.first()
+        )
+        assertTrue(prefs.shortcutsCustomizedFlow.first())
     }
 }
 

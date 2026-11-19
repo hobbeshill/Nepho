@@ -4,6 +4,7 @@
 
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+    <uses-permission android:name="com.android.alarm.permission.SET_ALARM" />
 
     <uses-feature android:name="android.hardware.touchscreen" android:required="false" />
 
@@ -14,10 +15,22 @@
         <package android:name="com.teamsnap.teamsnap" />
         <package android:name="com.google.android.apps.messaging" />
         <package android:name="com.twitter.android" />
-        <!-- Allow resolving launch intents for any app whose notification Nepho captured -->
+        <!-- Allow resolving launch intents for installed apps in the A-Z drawer and captured alerts -->
         <intent>
             <action android:name="android.intent.action.MAIN" />
             <category android:name="android.intent.category.LAUNCHER" />
+        </intent>
+        <!-- Allow resolving installed music apps for idle media card launch -->
+        <intent>
+            <action android:name="android.intent.action.MAIN" />
+            <category android:name="android.intent.category.APP_MUSIC" />
+        </intent>
+        <!-- Allow resolving Clock / Alarm apps -->
+        <intent>
+            <action android:name="android.intent.action.SET_ALARM" />
+        </intent>
+        <intent>
+            <action android:name="android.intent.action.SHOW_ALARMS" />
         </intent>
         <!-- Allow resolving direct GIF share targets (e.g., Messages, X/Twitter) -->
         <intent>
@@ -56,6 +69,12 @@
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
                 <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.HOME" />
+                <category android:name="android.intent.category.DEFAULT" />
             </intent-filter>
 
             <intent-filter>

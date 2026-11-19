@@ -30,6 +30,8 @@ class SessionPreferences(private val context: Context) {
         val OBSERVED_APPS = stringPreferencesKey("observed_apps_json")
         val OPTED_OUT_APPS = stringPreferencesKey("opted_out_apps_json")
         val UPDATE_GITHUB_REPO = stringPreferencesKey("update_github_repo")
+        val PINNED_SHORTCUTS_JSON = stringPreferencesKey("pinned_shortcuts_json")
+        val SHORTCUTS_CUSTOMIZED = booleanPreferencesKey("shortcuts_customized")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -62,6 +64,14 @@ class SessionPreferences(private val context: Context) {
 
     val updateGithubRepoFlow: Flow<String> = context.pulseSessionDataStore.data.map { prefs ->
         prefs[Keys.UPDATE_GITHUB_REPO].orEmpty()
+    }.distinctUntilChanged()
+
+    val pinnedShortcutsFlow: Flow<List<String>> = context.pulseSessionDataStore.data.map { prefs ->
+        decodeStringList(prefs[Keys.PINNED_SHORTCUTS_JSON])
+    }.distinctUntilChanged()
+
+    val shortcutsCustomizedFlow: Flow<Boolean> = context.pulseSessionDataStore.data.map { prefs ->
+        prefs[Keys.SHORTCUTS_CUSTOMIZED] ?: false
     }.distinctUntilChanged()
 
     suspend fun ensureSessionOpenedAt(): Long {
@@ -150,6 +160,16 @@ class SessionPreferences(private val context: Context) {
         }
     }
 
+    suspend fun setPinnedShortcuts(packages: List<String>, markCustomized: Boolean = true) {
+        val cleaned = packages.map { it.trim() }.filter { it.isNotEmpty() }.distinct()
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.PINNED_SHORTCUTS_JSON] = encodeStringList(cleaned)
+            if (markCustomized) {
+                prefs[Keys.SHORTCUTS_CUSTOMIZED] = true
+            }
+        }
+    }
+
     private fun parseShadeMode(raw: String?): ShadeMode {
         return raw?.let { runCatching { ShadeMode.valueOf(it) }.getOrNull() } ?: ShadeMode.SILENT
     }
@@ -217,6 +237,27 @@ class SessionPreferences(private val context: Context) {
             result
         } catch (_: Exception) {
             emptySet()
+        }
+    }
+
+    private fun encodeStringList(items: List<String>): String {
+        val array = org.json.JSONArray()
+        items.forEach { array.put(it) }
+        return array.toString()
+    }
+
+    private fun decodeStringList(raw: String?): List<String> {
+        if (raw.isNullOrBlank()) return emptyList()
+        return try {
+            val array = org.json.JSONArray(raw)
+            val result = ArrayList<String>(array.length())
+            for (i in 0 until array.length()) {
+                val value = array.optString(i)
+                if (value.isNotBlank()) result.add(value)
+            }
+            result
+        } catch (_: Exception) {
+            emptyList()
         }
     }
 }

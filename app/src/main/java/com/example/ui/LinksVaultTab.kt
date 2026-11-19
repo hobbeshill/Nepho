@@ -19,6 +19,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
@@ -84,6 +85,25 @@ fun LinksVaultTab(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        linksVaultSectionItems(
+            links = links,
+            searchQuery = searchQuery,
+            timeFormatter = timeFormatter,
+            context = context,
+            onSearchQueryChange = onSearchQueryChange,
+            onToggleLinkStar = onToggleLinkStar
+        )
+    }
+}
+
+fun LazyListScope.linksVaultSectionItems(
+    links: List<ExtractedLinkItem>,
+    searchQuery: String,
+    timeFormatter: SimpleDateFormat,
+    context: Context,
+    onSearchQueryChange: (String) -> Unit,
+    onToggleLinkStar: (String, Boolean) -> Unit
+) {
         item(key = "vault_header") {
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
@@ -205,7 +225,6 @@ fun LinksVaultTab(
                 )
             }
         }
-    }
 }
 
 @Composable

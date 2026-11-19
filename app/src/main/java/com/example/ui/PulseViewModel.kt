@@ -2,14 +2,18 @@ package com.example.ui
 
 import android.app.Application
 import android.content.ActivityNotFoundException
+import android.content.BroadcastReceiver
 import android.content.ClipData
 import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.net.Uri
 import android.os.PowerManager
 import android.provider.Settings
+import android.text.format.DateFormat
 import android.util.Log
+import androidx.core.content.ContextCompat
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.BuildConfig
@@ -25,6 +29,11 @@ import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
 import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.PulseDatabase
+import com.example.launcher.ClockAlarmHelper
+import com.example.launcher.LauncherAppCatalog
+import com.example.launcher.LauncherAppInfo
+import com.example.launcher.MediaPlaybackController
+import com.example.launcher.MediaPlaybackState
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
 import com.example.updates.GitHubReleaseUpdater
@@ -43,6 +52,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
@@ -93,6 +103,53 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _selectedTab = MutableStateFlow(PulseTab.FEED)
     val selectedTab: StateFlow<PulseTab> = _selectedTab.asStateFlow()
+
+    // Home Replacement / Launcher state
+    private val mediaController = MediaPlaybackController(application)
+    val mediaPlaybackState: StateFlow<MediaPlaybackState> = mediaController.state
+
+    private val _installedApps = MutableStateFlow<List<LauncherAppInfo>>(emptyList())
+    val installedApps: StateFlow<List<LauncherAppInfo>> = _installedApps.asStateFlow()
+
+    private val _appSearchQuery = MutableStateFlow("")
+    val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
+
+    val groupedInstalledApps: StateFlow<Map<String, List<LauncherAppInfo>>> = combine(
+        _installedApps,
+        _appSearchQuery
+    ) { apps, query ->
+        val filtered = LauncherAppCatalog.filterApps(apps, query)
+        LauncherAppCatalog.groupAlphabetically(filtered)
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyMap())
+
+    val pinnedShortcutPackages: StateFlow<List<String>> =
+        repository.sessionPreferences.pinnedShortcutsFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    val pinnedShortcutApps: StateFlow<List<LauncherAppInfo>> = combine(
+        _installedApps,
+        pinnedShortcutPackages
+    ) { installed, pinnedPkgs ->
+        val byPkg = installed.associateBy { it.packageName }
+        pinnedPkgs.mapNotNull { byPkg[it] }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+
+    private val _isDefaultHome = MutableStateFlow(LauncherAppCatalog.isDefaultHomeApp(application))
+    val isDefaultHome: StateFlow<Boolean> = _isDefaultHome.asStateFlow()
+
+    private val _nextAlarmSummary = MutableStateFlow(ClockAlarmHelper.readNextAlarmSummary(application))
+    val nextAlarmSummary: StateFlow<String?> = _nextAlarmSummary.asStateFlow()
+
+    private var packageReceiverRegistered = false
+    private val packageChangeReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            val changedPkg = intent?.data?.schemeSpecificPart
+            if (!changedPkg.isNullOrBlank()) {
+                LauncherAppCatalog.invalidateIcon(changedPkg)
+            }
+            refreshInstalledApps()
+        }
+    }
 
     private val _searchQuery = MutableStateFlow("")
     val searchQuery: StateFlow<String> = _searchQuery.asStateFlow()
@@ -276,6 +333,8 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     init {
         RetentionPurgeWorker.schedulePeriodicPurge(application)
+        registerPackageChangeReceiver(application)
+        refreshLauncherState()
         viewModelScope.launch {
             repository.initializeSession()
             val settings = digestDao.getDigestSettings()
@@ -286,11 +345,172 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         viewModelScope.launch {
             while (isActive) {
                 delay(60_000L)
+                _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(getApplication())
                 val purged = repository.purgeExpired()
                 if (purged > 0) {
                     emitSnackbar("24h rolling window purged $purged expired entries.")
                 }
             }
+        }
+    }
+
+    override fun onCleared() {
+        super.onCleared()
+        mediaController.release()
+        if (packageReceiverRegistered) {
+            runCatching {
+                getApplication<Application>().unregisterReceiver(packageChangeReceiver)
+            }
+            packageReceiverRegistered = false
+        }
+    }
+
+    private fun registerPackageChangeReceiver(context: Context) {
+        val filter = IntentFilter().apply {
+            addAction(Intent.ACTION_PACKAGE_ADDED)
+            addAction(Intent.ACTION_PACKAGE_REMOVED)
+            addAction(Intent.ACTION_PACKAGE_CHANGED)
+            addAction(Intent.ACTION_PACKAGE_REPLACED)
+            addDataScheme("package")
+        }
+        runCatching {
+            ContextCompat.registerReceiver(
+                context,
+                packageChangeReceiver,
+                filter,
+                ContextCompat.RECEIVER_NOT_EXPORTED
+            )
+            packageReceiverRegistered = true
+        }.onFailure {
+            Log.w(TAG, "Unable to register package change receiver", it)
+        }
+    }
+
+    fun refreshLauncherState() {
+        val ctx = getApplication<Application>()
+        _isDefaultHome.value = LauncherAppCatalog.isDefaultHomeApp(ctx)
+        _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(ctx)
+        mediaController.refresh()
+        refreshInstalledApps()
+    }
+
+    private fun refreshInstalledApps() {
+        viewModelScope.launch {
+            val ctx = getApplication<Application>()
+            val apps = withContext(Dispatchers.IO) {
+                LauncherAppCatalog.loadLaunchableApps(ctx)
+            }
+            _installedApps.value = apps
+            val customized = repository.sessionPreferences.shortcutsCustomizedFlow.first()
+            val currentPinned = repository.sessionPreferences.pinnedShortcutsFlow.first()
+            if (!customized && currentPinned.isEmpty() && apps.isNotEmpty()) {
+                val seeded = LauncherAppCatalog.seedDefaultShortcuts(apps)
+                if (seeded.isNotEmpty()) {
+                    repository.sessionPreferences.setPinnedShortcuts(seeded, markCustomized = false)
+                }
+            }
+        }
+    }
+
+    fun updateAppSearchQuery(query: String) {
+        _appSearchQuery.value = query
+    }
+
+    fun launchInstalledApp(app: LauncherAppInfo) {
+        val ctx = getApplication<Application>()
+        if (!LauncherAppCatalog.launchApp(ctx, app)) {
+            emitSnackbar(ctx.getString(R.string.open_app_unavailable, app.label))
+        }
+    }
+
+    fun togglePinnedShortcut(app: LauncherAppInfo) {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.pinnedShortcutsFlow.first().toMutableList()
+            if (app.packageName in current) {
+                current.remove(app.packageName)
+                repository.sessionPreferences.setPinnedShortcuts(current, markCustomized = true)
+                emitSnackbar(ctx.getString(R.string.drawer_unpinned_toast, app.label))
+            } else {
+                if (current.size >= LauncherAppCatalog.MAX_PINNED_SHORTCUTS) {
+                    emitSnackbar(
+                        ctx.getString(
+                            R.string.drawer_pin_limit_toast,
+                            LauncherAppCatalog.MAX_PINNED_SHORTCUTS
+                        )
+                    )
+                    return@launch
+                }
+                current.add(app.packageName)
+                repository.sessionPreferences.setPinnedShortcuts(current, markCustomized = true)
+                emitSnackbar(ctx.getString(R.string.drawer_pinned_toast, app.label))
+            }
+        }
+    }
+
+    fun movePinnedShortcut(packageName: String, delta: Int) {
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.pinnedShortcutsFlow.first().toMutableList()
+            val index = current.indexOf(packageName)
+            if (index < 0) return@launch
+            val target = (index + delta).coerceIn(0, current.lastIndex)
+            if (target == index) return@launch
+            val item = current.removeAt(index)
+            current.add(target, item)
+            repository.sessionPreferences.setPinnedShortcuts(current, markCustomized = true)
+        }
+    }
+
+    fun openDefaultHomeSettings() {
+        val ctx = getApplication<Application>()
+        if (!LauncherAppCatalog.openHomeSettings(ctx)) {
+            emitSnackbar(ctx.getString(R.string.default_home_settings_unavailable))
+        }
+    }
+
+    fun setQuickAlarm(hour: Int, minute: Int, label: String?) {
+        val ctx = getApplication<Application>()
+        val launched = ClockAlarmHelper.launchSetAlarm(ctx, hour, minute, label)
+        if (launched) {
+            val formatted = ClockAlarmHelper.formatAlarmTime(
+                hour = hour,
+                minute = minute,
+                is24Hour = DateFormat.is24HourFormat(ctx)
+            )
+            emitSnackbar(ctx.getString(R.string.alarm_set_success, formatted))
+            viewModelScope.launch {
+                delay(1_200L)
+                _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(ctx)
+            }
+        } else {
+            emitSnackbar(ctx.getString(R.string.alarm_app_unavailable))
+        }
+    }
+
+    fun openClockApp() {
+        val ctx = getApplication<Application>()
+        if (!ClockAlarmHelper.openClockApp(ctx)) {
+            emitSnackbar(ctx.getString(R.string.alarm_app_unavailable))
+        }
+    }
+
+    fun mediaTogglePlayPause() {
+        mediaController.togglePlayPause()
+    }
+
+    fun mediaSkipNext() {
+        mediaController.skipNext()
+    }
+
+    fun mediaSkipPrevious() {
+        mediaController.skipPrevious()
+    }
+
+    fun openMusicApp() {
+        val ctx = getApplication<Application>()
+        val fallbackPkg = LauncherAppCatalog.findDefaultMusicPackage(ctx, _installedApps.value)
+        if (!mediaController.openActiveMediaApp(ctx, fallbackPkg)) {
+            emitSnackbar(ctx.getString(R.string.music_app_unavailable))
         }
     }
 

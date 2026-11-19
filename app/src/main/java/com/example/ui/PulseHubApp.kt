@@ -1,53 +1,52 @@
 package com.example.ui
 
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
-import androidx.compose.foundation.layout.navigationBarsPadding
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.safeDrawing
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListState
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
-import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DynamicFeed
 import androidx.compose.material.icons.filled.EditNote
+import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
+import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Widgets
-import androidx.compose.material3.Badge
-import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.NavigationBar
-import androidx.compose.material3.NavigationBarItem
-import androidx.compose.material3.NavigationBarItemDefaults
-import androidx.compose.material3.NavigationRail
-import androidx.compose.material3.NavigationRailItem
-import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
 import androidx.compose.material3.Snackbar
 import androidx.compose.material3.SnackbarDuration
@@ -62,34 +61,42 @@ import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.SpanStyle
 import androidx.compose.ui.text.buildAnnotatedString
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.BuildConfig
 import com.example.R
+import com.example.launcher.LauncherAppInfo
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderHairline
 import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
+import com.example.ui.theme.ElevatedSurface
 import com.example.ui.theme.EmeraldOk
 import com.example.ui.theme.MidnightSurface
 import com.example.ui.theme.ObsidianBackground
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -127,13 +134,34 @@ fun NephoApp(
     val updateGithubRepo by viewModel.updateGithubRepo.collectAsStateWithLifecycle()
     val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
 
+    // Home Replacement / Launcher states
+    val mediaPlaybackState by viewModel.mediaPlaybackState.collectAsStateWithLifecycle()
+    val nextAlarmSummary by viewModel.nextAlarmSummary.collectAsStateWithLifecycle()
+    val installedApps by viewModel.installedApps.collectAsStateWithLifecycle()
+    val appSearchQuery by viewModel.appSearchQuery.collectAsStateWithLifecycle()
+    val groupedApps by viewModel.groupedInstalledApps.collectAsStateWithLifecycle()
+    val pinnedShortcutApps by viewModel.pinnedShortcutApps.collectAsStateWithLifecycle()
+    val pinnedShortcutPackages by viewModel.pinnedShortcutPackages.collectAsStateWithLifecycle()
+    val isDefaultHome by viewModel.isDefaultHome.collectAsStateWithLifecycle()
+
+    val pinnedPackageSet = remember(pinnedShortcutPackages) { pinnedShortcutPackages.toSet() }
+
+    val context = LocalContext.current
+    val coroutineScope = rememberCoroutineScope()
     val snackbarHostState = remember { SnackbarHostState() }
+    val portraitListState = rememberLazyListState()
+    val landscapeLeftListState = rememberLazyListState()
+    val landscapeRightListState = rememberLazyListState()
+    val collapsedGroups = remember { mutableStateMapOf<String, Boolean>() }
+
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by rememberSaveable { mutableStateOf(false) }
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
     var showDigestDialog by rememberSaveable { mutableStateOf(false) }
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
+    var showQuickAlarmDialog by rememberSaveable { mutableStateOf(false) }
+    var showShortcutDrawer by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -162,15 +190,6 @@ fun NephoApp(
         }
     }
 
-    if (showDigestDialog) {
-        DigestDialog(
-            settings = digestSettings,
-            summaries = digestSummaries,
-            onSetEnabled = viewModel::setDigestEnabled,
-            onDismiss = { showDigestDialog = false }
-        )
-    }
-
     LaunchedEffect(Unit) {
         viewModel.snackbarEvents.collect { event ->
             snackbarHostState.currentSnackbarData?.dismiss()
@@ -183,6 +202,44 @@ fun NephoApp(
                 event.onAction?.invoke()
             }
         }
+    }
+
+    // Back gesture behavior for Home replacement & overlays
+    val shouldInterceptBack = showShortcutDrawer ||
+        showQuickAlarmDialog ||
+        appSearchQuery.isNotEmpty() ||
+        isDefaultHome
+
+    BackHandler(enabled = shouldInterceptBack) {
+        when {
+            showShortcutDrawer -> showShortcutDrawer = false
+            showQuickAlarmDialog -> showQuickAlarmDialog = false
+            appSearchQuery.isNotEmpty() -> viewModel.updateAppSearchQuery("")
+            else -> {
+                coroutineScope.launch {
+                    portraitListState.animateScrollToItem(0)
+                    landscapeLeftListState.animateScrollToItem(0)
+                    landscapeRightListState.animateScrollToItem(0)
+                }
+            }
+        }
+    }
+
+    if (showQuickAlarmDialog) {
+        QuickAlarmDialog(
+            onSetAlarm = viewModel::setQuickAlarm,
+            onOpenClockApp = viewModel::openClockApp,
+            onDismiss = { showQuickAlarmDialog = false }
+        )
+    }
+
+    if (showDigestDialog) {
+        DigestDialog(
+            settings = digestSettings,
+            summaries = digestSummaries,
+            onSetEnabled = viewModel::setDigestEnabled,
+            onDismiss = { showDigestDialog = false }
+        )
     }
 
     if (showComposeDialog) {
@@ -258,7 +315,6 @@ fun NephoApp(
             allNotifications.filter { it.threadId == id }.sortedBy { it.postTime }
         }.orEmpty()
     }
-    // Auto-close the popup when the thread is dismissed/acted on (locally or synced from the source app)
     LaunchedEffect(threadTargetId, threadItems.isEmpty()) {
         if (threadTargetId != null && threadItems.isEmpty()) {
             threadTargetId = null
@@ -285,8 +341,85 @@ fun NephoApp(
         )
     }
 
+    // Calculate item indices dynamically so smooth section & A-Z letter jumping is exact
+    val inboxItemCount = computeInboxItemCount(
+        selectedTab = selectedTab,
+        notifications = notifications,
+        links = links,
+        selectedAppFilter = selectedAppFilter,
+        isNotificationAccessGranted = isNotificationAccessGranted,
+        bannerDismissed = bannerDismissed,
+        collapsedGroups = collapsedGroups
+    )
+
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
-        val useRail = maxWidth >= 600.dp
+        val isLandscapeSplit = maxWidth >= 640.dp
+
+        val jumpToSection: (HomeSectionTarget) -> Unit = { target ->
+            coroutineScope.launch {
+                if (isLandscapeSplit) {
+                    when (target) {
+                        HomeSectionTarget.CLOCK -> landscapeLeftListState.animateScrollToItem(0)
+                        HomeSectionTarget.MUSIC -> landscapeLeftListState.animateScrollToItem(1)
+                        HomeSectionTarget.APPS -> landscapeLeftListState.animateScrollToItem(2)
+                        HomeSectionTarget.FEED -> {
+                            viewModel.selectTab(PulseTab.FEED)
+                            landscapeRightListState.animateScrollToItem(0)
+                        }
+                        HomeSectionTarget.VAULT -> {
+                            viewModel.selectTab(PulseTab.LINKS_VAULT)
+                            landscapeRightListState.animateScrollToItem(0)
+                        }
+                    }
+                } else {
+                    when (target) {
+                        HomeSectionTarget.CLOCK -> portraitListState.animateScrollToItem(0)
+                        HomeSectionTarget.MUSIC -> portraitListState.animateScrollToItem(1)
+                        HomeSectionTarget.FEED -> {
+                            viewModel.selectTab(PulseTab.FEED)
+                            portraitListState.animateScrollToItem(2)
+                        }
+                        HomeSectionTarget.VAULT -> {
+                            viewModel.selectTab(PulseTab.LINKS_VAULT)
+                            portraitListState.animateScrollToItem(2)
+                        }
+                        HomeSectionTarget.APPS -> {
+                            // 0=Clock, 1=Music, 2=InboxSwitcher, 3..3+inboxItemCount-1=InboxItems
+                            val appDrawerHeaderIndex = 3 + inboxItemCount
+                            portraitListState.animateScrollToItem(appDrawerHeaderIndex)
+                        }
+                    }
+                }
+            }
+        }
+
+        val jumpToDrawerLetter: (String) -> Unit = { letter ->
+            val drawerHeaderIndex = if (isLandscapeSplit) 2 else (3 + inboxItemCount)
+            val offsetInsideDrawer = computeLetterOffsetInDrawer(groupedApps, letter)
+            if (offsetInsideDrawer >= 0) {
+                val targetIndex = drawerHeaderIndex + 1 + offsetInsideDrawer
+                coroutineScope.launch {
+                    val state: LazyListState = if (isLandscapeSplit) landscapeLeftListState else portraitListState
+                    state.animateScrollToItem(targetIndex)
+                }
+            }
+        }
+
+        if (showShortcutDrawer) {
+            ShortcutDrawerSheet(
+                pinnedApps = pinnedShortcutApps,
+                allInstalledApps = installedApps,
+                isDefaultHome = isDefaultHome,
+                unreadCount = metrics.unreadTotal,
+                linksCount = metrics.totalLinks,
+                onLaunchApp = viewModel::launchInstalledApp,
+                onTogglePin = viewModel::togglePinnedShortcut,
+                onMovePinnedShortcut = viewModel::movePinnedShortcut,
+                onJumpToSection = jumpToSection,
+                onOpenDefaultHomeSettings = viewModel::openDefaultHomeSettings,
+                onDismiss = { showShortcutDrawer = false }
+            )
+        }
 
         Scaffold(
             modifier = Modifier.fillMaxSize(),
@@ -441,6 +574,29 @@ fun NephoApp(
                                     onDismissRequest = { menuExpanded = false }
                                 ) {
                                     DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (isDefaultHome) {
+                                                    stringResource(R.string.default_home_active)
+                                                } else {
+                                                    stringResource(R.string.action_set_default_home)
+                                                }
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (isDefaultHome) Icons.Filled.Home else Icons.Outlined.Home,
+                                                contentDescription = null,
+                                                tint = if (isDefaultHome) EmeraldOk else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            viewModel.openDefaultHomeSettings()
+                                        },
+                                        modifier = Modifier.testTag("menu_default_home")
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.digest_title)) },
                                         onClick = {
                                             menuExpanded = false
@@ -522,96 +678,84 @@ fun NephoApp(
                 }
             },
             bottomBar = {
-                if (!useRail) {
-                    NavigationBar(
-                        containerColor = MidnightSurface,
-                        modifier = Modifier.navigationBarsPadding()
-                    ) {
-                        PulseTabItem(
-                            selected = selectedTab == PulseTab.FEED,
-                            label = stringResource(R.string.tab_feed),
-                            badgeCount = metrics.unreadTotal,
-                            selectedIcon = Icons.Default.DynamicFeed,
-                            unselectedIcon = Icons.Outlined.DynamicFeed,
-                            testTag = "nav_tab_feed",
-                            onClick = { viewModel.selectTab(PulseTab.FEED) }
-                        )
-                        PulseTabItem(
-                            selected = selectedTab == PulseTab.LINKS_VAULT,
-                            label = stringResource(R.string.tab_vault),
-                            badgeCount = metrics.totalLinks,
-                            selectedIcon = Icons.Default.Link,
-                            unselectedIcon = Icons.Outlined.Link,
-                            testTag = "nav_tab_vault",
-                            onClick = { viewModel.selectTab(PulseTab.LINKS_VAULT) }
-                        )
-                    }
-                }
+                BottomShortcutDock(
+                    pinnedApps = pinnedShortcutApps,
+                    onLaunchApp = viewModel::launchInstalledApp,
+                    onExpandDrawer = { showShortcutDrawer = true }
+                )
             }
         ) { innerPadding ->
-            Row(
-                modifier = Modifier
-                    .fillMaxSize()
-                    .padding(innerPadding)
-            ) {
-                if (useRail) {
-                    NavigationRail(
-                        containerColor = MidnightSurface,
-                        modifier = Modifier.fillMaxHeight()
-                    ) {
-                        Spacer(Modifier.size(12.dp))
-                        NavigationRailItem(
-                            selected = selectedTab == PulseTab.FEED,
-                            onClick = { viewModel.selectTab(PulseTab.FEED) },
-                            icon = {
-                                BadgedNavIcon(
-                                    icon = if (selectedTab == PulseTab.FEED) Icons.Default.DynamicFeed else Icons.Outlined.DynamicFeed,
-                                    count = metrics.unreadTotal,
-                                    contentDescription = stringResource(R.string.tab_feed)
-                                )
-                            },
-                            label = { Text(stringResource(R.string.tab_feed)) },
-                            colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = CyanPulse,
-                                indicatorColor = CyanPulseContainer
-                            ),
-                            modifier = Modifier.testTag("rail_tab_feed")
-                        )
-                        NavigationRailItem(
-                            selected = selectedTab == PulseTab.LINKS_VAULT,
-                            onClick = { viewModel.selectTab(PulseTab.LINKS_VAULT) },
-                            icon = {
-                                BadgedNavIcon(
-                                    icon = if (selectedTab == PulseTab.LINKS_VAULT) Icons.Default.Link else Icons.Outlined.Link,
-                                    count = metrics.totalLinks,
-                                    contentDescription = stringResource(R.string.tab_vault)
-                                )
-                            },
-                            label = { Text(stringResource(R.string.tab_vault)) },
-                            colors = NavigationRailItemDefaults.colors(
-                                selectedIconColor = CyanPulse,
-                                indicatorColor = CyanPulseContainer
-                            ),
-                            modifier = Modifier.testTag("rail_tab_vault")
-                        )
-                    }
-                }
-
-                Box(
+            if (isLandscapeSplit) {
+                Row(
                     modifier = Modifier
-                        .weight(1f)
-                        .fillMaxHeight(),
-                    contentAlignment = Alignment.TopCenter
+                        .fillMaxSize()
+                        .padding(innerPadding)
+                        .padding(horizontal = 16.dp)
+                        .testTag("home_landscape_split"),
+                    horizontalArrangement = Arrangement.spacedBy(16.dp)
                 ) {
-                    Box(
+                    // Left Pane (~45%): Clock, Music Controls, Searchable A-Z App Drawer
+                    LazyColumn(
+                        state = landscapeLeftListState,
                         modifier = Modifier
+                            .weight(0.45f)
                             .fillMaxHeight()
-                            .widthIn(max = 840.dp)
-                            .fillMaxWidth()
+                            .testTag("home_landscape_left_list"),
+                        contentPadding = PaddingValues(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
+                        item(key = "home_clock") {
+                            HomeClockCard(
+                                nextAlarmSummary = nextAlarmSummary,
+                                onClick = { showQuickAlarmDialog = true }
+                            )
+                        }
+                        item(key = "home_music") {
+                            HomeMusicCard(
+                                mediaState = mediaPlaybackState,
+                                onTogglePlayPause = viewModel::mediaTogglePlayPause,
+                                onSkipPrevious = viewModel::mediaSkipPrevious,
+                                onSkipNext = viewModel::mediaSkipNext,
+                                onOpenMusicApp = viewModel::openMusicApp,
+                                onGrantNotificationAccess = onOpenNotificationAccessSettings
+                            )
+                        }
+                        appDrawerSectionItems(
+                            totalInstalledCount = installedApps.size,
+                            searchQuery = appSearchQuery,
+                            groupedApps = groupedApps,
+                            pinnedPackages = pinnedPackageSet,
+                            onSearchQueryChange = viewModel::updateAppSearchQuery,
+                            onJumpToLetter = jumpToDrawerLetter,
+                            onLaunchApp = viewModel::launchInstalledApp,
+                            onTogglePin = viewModel::togglePinnedShortcut
+                        )
+                        item(key = "landscape_left_bottom_spacer") {
+                            Spacer(Modifier.height(16.dp))
+                        }
+                    }
+
+                    // Right Pane (~55%): Feed / Links Vault switcher + items
+                    LazyColumn(
+                        state = landscapeRightListState,
+                        modifier = Modifier
+                            .weight(0.55f)
+                            .fillMaxHeight()
+                            .testTag("home_landscape_right_list"),
+                        contentPadding = PaddingValues(vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item(key = "home_inbox_header") {
+                            InboxModeSwitcher(
+                                selectedTab = selectedTab,
+                                unreadCount = metrics.unreadTotal,
+                                linksCount = metrics.totalLinks,
+                                onSelectTab = viewModel::selectTab
+                            )
+                        }
                         when (selectedTab) {
                             PulseTab.FEED -> {
-                                FeedTab(
+                                feedSectionItems(
                                     notifications = notifications,
                                     sessionOpenedAt = sessionOpenedAt,
                                     searchQuery = searchQuery,
@@ -622,6 +766,8 @@ fun NephoApp(
                                     bannerDismissed = bannerDismissed,
                                     hasNotificationPermission = hasNotificationPermission,
                                     isNotificationAccessGranted = isNotificationAccessGranted,
+                                    timeFormatter = timeFmt,
+                                    collapsedGroups = collapsedGroups,
                                     onSearchQueryChange = viewModel::updateSearchQuery,
                                     onSelectAppFilter = viewModel::selectAppFilter,
                                     onToggleUnreadOnly = viewModel::toggleUnreadOnly,
@@ -639,9 +785,7 @@ fun NephoApp(
                                                 .map { it.key }
                                         )
                                     },
-                                    onOpenApp = { item ->
-                                        viewModel.openSourceApp(item)
-                                    },
+                                    onOpenApp = viewModel::openSourceApp,
                                     onOpenSelectedApp = viewModel::openSelectedApp,
                                     onToggleStar = viewModel::toggleNotificationStar,
                                     onSwipeToggleStar = viewModel::toggleNotificationStarFromSwipe,
@@ -654,15 +798,137 @@ fun NephoApp(
                                     onOpenVaultTab = { viewModel.selectTab(PulseTab.LINKS_VAULT) }
                                 )
                             }
-
                             PulseTab.LINKS_VAULT -> {
-                                LinksVaultTab(
+                                linksVaultSectionItems(
                                     links = links,
                                     searchQuery = vaultSearchQuery,
+                                    timeFormatter = timeFmt,
+                                    context = context,
                                     onSearchQueryChange = viewModel::updateVaultSearchQuery,
                                     onToggleLinkStar = viewModel::toggleLinkStar
                                 )
                             }
+                        }
+                        item(key = "landscape_right_bottom_spacer") {
+                            Spacer(Modifier.height(16.dp))
+                        }
+                    }
+                }
+            } else {
+                // Portrait: Single continuous vertical scroll (longer than one page)
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(innerPadding),
+                    contentAlignment = Alignment.TopCenter
+                ) {
+                    LazyColumn(
+                        state = portraitListState,
+                        modifier = Modifier
+                            .fillMaxHeight()
+                            .widthIn(max = 640.dp)
+                            .fillMaxWidth()
+                            .testTag("home_vertical_list"),
+                        contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
+                        verticalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        item(key = "home_clock") {
+                            HomeClockCard(
+                                nextAlarmSummary = nextAlarmSummary,
+                                onClick = { showQuickAlarmDialog = true }
+                            )
+                        }
+
+                        item(key = "home_music") {
+                            HomeMusicCard(
+                                mediaState = mediaPlaybackState,
+                                onTogglePlayPause = viewModel::mediaTogglePlayPause,
+                                onSkipPrevious = viewModel::mediaSkipPrevious,
+                                onSkipNext = viewModel::mediaSkipNext,
+                                onOpenMusicApp = viewModel::openMusicApp,
+                                onGrantNotificationAccess = onOpenNotificationAccessSettings
+                            )
+                        }
+
+                        item(key = "home_inbox_header") {
+                            InboxModeSwitcher(
+                                selectedTab = selectedTab,
+                                unreadCount = metrics.unreadTotal,
+                                linksCount = metrics.totalLinks,
+                                onSelectTab = viewModel::selectTab
+                            )
+                        }
+
+                        when (selectedTab) {
+                            PulseTab.FEED -> {
+                                feedSectionItems(
+                                    notifications = notifications,
+                                    sessionOpenedAt = sessionOpenedAt,
+                                    searchQuery = searchQuery,
+                                    selectedAppFilter = selectedAppFilter,
+                                    unreadOnly = unreadOnly,
+                                    hasLinksOnly = hasLinksOnly,
+                                    starredOnly = starredOnly,
+                                    bannerDismissed = bannerDismissed,
+                                    hasNotificationPermission = hasNotificationPermission,
+                                    isNotificationAccessGranted = isNotificationAccessGranted,
+                                    timeFormatter = timeFmt,
+                                    collapsedGroups = collapsedGroups,
+                                    onSearchQueryChange = viewModel::updateSearchQuery,
+                                    onSelectAppFilter = viewModel::selectAppFilter,
+                                    onToggleUnreadOnly = viewModel::toggleUnreadOnly,
+                                    onToggleHasLinksOnly = viewModel::toggleHasLinksOnly,
+                                    onToggleStarredOnly = viewModel::toggleStarredOnly,
+                                    onRequestNotificationPermission = onRequestNotificationPermission,
+                                    onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
+                                    onOpenShadePreferences = { showShadePrefsDialog = true },
+                                    onDismissBanner = viewModel::dismissBanner,
+                                    onOpenThread = { item ->
+                                        threadTargetId = item.threadId
+                                        viewModel.markThreadAsRead(
+                                            allNotifications
+                                                .filter { it.threadId == item.threadId && !it.isRead }
+                                                .map { it.key }
+                                        )
+                                    },
+                                    onOpenApp = viewModel::openSourceApp,
+                                    onOpenSelectedApp = viewModel::openSelectedApp,
+                                    onToggleStar = viewModel::toggleNotificationStar,
+                                    onSwipeToggleStar = viewModel::toggleNotificationStarFromSwipe,
+                                    onSwipeDismissItem = viewModel::dismissNotificationWithUndo,
+                                    onSwipeStarBlocked = viewModel::notifyStarredSwipeProtected,
+                                    onMarkGroupRead = viewModel::markAppGroupAsRead,
+                                    onClearGroup = viewModel::clearAppGroupWithUndo,
+                                    onOpenReminderDialog = { item -> reminderTargetItem = item },
+                                    onDismissItem = viewModel::dismissNotificationWithUndo,
+                                    onOpenVaultTab = { viewModel.selectTab(PulseTab.LINKS_VAULT) }
+                                )
+                            }
+                            PulseTab.LINKS_VAULT -> {
+                                linksVaultSectionItems(
+                                    links = links,
+                                    searchQuery = vaultSearchQuery,
+                                    timeFormatter = timeFmt,
+                                    context = context,
+                                    onSearchQueryChange = viewModel::updateVaultSearchQuery,
+                                    onToggleLinkStar = viewModel::toggleLinkStar
+                                )
+                            }
+                        }
+
+                        appDrawerSectionItems(
+                            totalInstalledCount = installedApps.size,
+                            searchQuery = appSearchQuery,
+                            groupedApps = groupedApps,
+                            pinnedPackages = pinnedPackageSet,
+                            onSearchQueryChange = viewModel::updateAppSearchQuery,
+                            onJumpToLetter = jumpToDrawerLetter,
+                            onLaunchApp = viewModel::launchInstalledApp,
+                            onTogglePin = viewModel::togglePinnedShortcut
+                        )
+
+                        item(key = "portrait_bottom_spacer") {
+                            Spacer(Modifier.height(20.dp))
                         }
                     }
                 }
@@ -672,58 +938,151 @@ fun NephoApp(
 }
 
 @Composable
-private fun androidx.compose.foundation.layout.RowScope.PulseTabItem(
-    selected: Boolean,
-    label: String,
-    badgeCount: Int,
-    selectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
-    unselectedIcon: androidx.compose.ui.graphics.vector.ImageVector,
-    testTag: String,
-    onClick: () -> Unit
+private fun InboxModeSwitcher(
+    selectedTab: PulseTab,
+    unreadCount: Int,
+    linksCount: Int,
+    onSelectTab: (PulseTab) -> Unit
 ) {
-    NavigationBarItem(
-        selected = selected,
-        onClick = onClick,
-        icon = {
-            BadgedNavIcon(
-                icon = if (selected) selectedIcon else unselectedIcon,
-                count = badgeCount,
-                contentDescription = label
+    Surface(
+        shape = RoundedCornerShape(16.dp),
+        color = MidnightSurface,
+        border = BorderStroke(1.dp, BorderHairline),
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("home_inbox_switcher")
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(4.dp),
+            horizontalArrangement = Arrangement.spacedBy(6.dp)
+        ) {
+            InboxSegmentButton(
+                selected = selectedTab == PulseTab.FEED,
+                label = stringResource(R.string.tab_feed),
+                badgeCount = unreadCount,
+                icon = if (selectedTab == PulseTab.FEED) Icons.Default.DynamicFeed else Icons.Outlined.DynamicFeed,
+                testTag = "nav_tab_feed",
+                onClick = { onSelectTab(PulseTab.FEED) },
+                modifier = Modifier.weight(1f)
             )
-        },
-        label = {
-            Text(
-                text = label,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis
+            InboxSegmentButton(
+                selected = selectedTab == PulseTab.LINKS_VAULT,
+                label = stringResource(R.string.tab_vault),
+                badgeCount = linksCount,
+                icon = if (selectedTab == PulseTab.LINKS_VAULT) Icons.Default.Link else Icons.Outlined.Link,
+                testTag = "nav_tab_vault",
+                onClick = { onSelectTab(PulseTab.LINKS_VAULT) },
+                modifier = Modifier.weight(1f)
             )
-        },
-        colors = NavigationBarItemDefaults.colors(
-            selectedIconColor = CyanPulse,
-            selectedTextColor = CyanPulse,
-            indicatorColor = CyanPulseContainer
-        ),
-        modifier = Modifier.testTag(testTag)
-    )
+        }
+    }
 }
 
 @Composable
-private fun BadgedNavIcon(
-    icon: androidx.compose.ui.graphics.vector.ImageVector,
-    count: Int,
-    contentDescription: String
+private fun InboxSegmentButton(
+    selected: Boolean,
+    label: String,
+    badgeCount: Int,
+    icon: ImageVector,
+    testTag: String,
+    onClick: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
-    if (count > 0) {
-        BadgedBox(
-            badge = {
-                Badge(containerColor = CyanPulse, contentColor = ObsidianBackground) {
-                    Text(if (count > 99) "99+" else count.toString())
+    Surface(
+        shape = RoundedCornerShape(12.dp),
+        color = if (selected) CyanPulseContainer else ElevatedSurface.copy(alpha = 0.45f),
+        border = if (selected) BorderStroke(1.dp, CyanPulse.copy(alpha = 0.45f)) else null,
+        modifier = modifier
+            .minimumInteractiveComponentSize()
+            .clip(RoundedCornerShape(12.dp))
+            .clickable(onClick = onClick)
+            .testTag(testTag)
+    ) {
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(horizontal = 12.dp, vertical = 10.dp),
+            horizontalArrangement = Arrangement.Center,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = if (selected) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant,
+                modifier = Modifier.size(18.dp)
+            )
+            Spacer(Modifier.width(6.dp))
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                color = if (selected) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant,
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+            if (badgeCount > 0) {
+                Spacer(Modifier.width(6.dp))
+                Surface(
+                    shape = CircleShape,
+                    color = if (selected) CyanPulse else BorderHairline
+                ) {
+                    Text(
+                        text = if (badgeCount > 99) "99+" else badgeCount.toString(),
+                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
+                        color = if (selected) ObsidianBackground else MaterialTheme.colorScheme.onSurface,
+                        modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
+                    )
                 }
             }
-        ) {
-            Icon(imageVector = icon, contentDescription = contentDescription)
         }
-    } else {
-        Icon(imageVector = icon, contentDescription = contentDescription)
     }
+}
+
+private fun computeInboxItemCount(
+    selectedTab: PulseTab,
+    notifications: List<com.example.data.PulseNotificationItem>,
+    links: List<com.example.data.ExtractedLinkItem>,
+    selectedAppFilter: com.example.data.SupportedApp?,
+    isNotificationAccessGranted: Boolean,
+    bannerDismissed: Boolean,
+    collapsedGroups: Map<String, Boolean>
+): Int {
+    return when (selectedTab) {
+        PulseTab.FEED -> {
+            var count = 0
+            if (!isNotificationAccessGranted || !bannerDismissed) count += 1 // onboarding banner
+            count += 1 // search & filters
+            if (selectedAppFilter != null) count += 1 // selected_app_link
+            if (notifications.isEmpty()) {
+                count += 1 // empty_feed
+            } else {
+                val groups = notifications.groupBy { it.packageName }
+                groups.forEach { (pkg, items) ->
+                    count += 1 // group header
+                    if (collapsedGroups[pkg] != true) {
+                        count += items.size
+                    }
+                }
+            }
+            count
+        }
+        PulseTab.LINKS_VAULT -> {
+            1 + if (links.isEmpty()) 1 else links.size
+        }
+    }
+}
+
+private fun computeLetterOffsetInDrawer(
+    groupedApps: Map<String, List<LauncherAppInfo>>,
+    targetLetter: String
+): Int {
+    var offset = 0
+    for ((letter, apps) in groupedApps) {
+        if (letter == targetLetter) {
+            return offset
+        }
+        offset += 1 + apps.size
+    }
+    return -1
 }

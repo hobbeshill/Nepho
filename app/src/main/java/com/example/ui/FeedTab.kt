@@ -17,6 +17,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.CircleShape
@@ -141,6 +142,79 @@ fun FeedTab(
         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
         verticalArrangement = Arrangement.spacedBy(12.dp)
     ) {
+        feedSectionItems(
+            notifications = notifications,
+            sessionOpenedAt = sessionOpenedAt,
+            searchQuery = searchQuery,
+            selectedAppFilter = selectedAppFilter,
+            unreadOnly = unreadOnly,
+            hasLinksOnly = hasLinksOnly,
+            starredOnly = starredOnly,
+            bannerDismissed = bannerDismissed,
+            hasNotificationPermission = hasNotificationPermission,
+            isNotificationAccessGranted = isNotificationAccessGranted,
+            timeFormatter = timeFormatter,
+            collapsedGroups = collapsedGroups,
+            onSearchQueryChange = onSearchQueryChange,
+            onSelectAppFilter = onSelectAppFilter,
+            onToggleUnreadOnly = onToggleUnreadOnly,
+            onToggleHasLinksOnly = onToggleHasLinksOnly,
+            onToggleStarredOnly = onToggleStarredOnly,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
+            onOpenShadePreferences = onOpenShadePreferences,
+            onDismissBanner = onDismissBanner,
+            onOpenThread = onOpenThread,
+            onOpenApp = onOpenApp,
+            onOpenSelectedApp = onOpenSelectedApp,
+            onToggleStar = onToggleStar,
+            onSwipeToggleStar = onSwipeToggleStar,
+            onSwipeDismissItem = onSwipeDismissItem,
+            onSwipeStarBlocked = onSwipeStarBlocked,
+            onMarkGroupRead = onMarkGroupRead,
+            onClearGroup = onClearGroup,
+            onOpenReminderDialog = onOpenReminderDialog,
+            onDismissItem = onDismissItem,
+            onOpenVaultTab = onOpenVaultTab
+        )
+    }
+}
+
+fun LazyListScope.feedSectionItems(
+    notifications: List<PulseNotificationItem>,
+    sessionOpenedAt: Long,
+    searchQuery: String,
+    selectedAppFilter: SupportedApp?,
+    unreadOnly: Boolean,
+    hasLinksOnly: Boolean,
+    starredOnly: Boolean,
+    bannerDismissed: Boolean,
+    hasNotificationPermission: Boolean,
+    isNotificationAccessGranted: Boolean,
+    timeFormatter: SimpleDateFormat,
+    collapsedGroups: MutableMap<String, Boolean>,
+    onSearchQueryChange: (String) -> Unit,
+    onSelectAppFilter: (SupportedApp?) -> Unit,
+    onToggleUnreadOnly: () -> Unit,
+    onToggleHasLinksOnly: () -> Unit,
+    onToggleStarredOnly: () -> Unit,
+    onRequestNotificationPermission: () -> Unit,
+    onOpenNotificationAccessSettings: () -> Unit,
+    onOpenShadePreferences: () -> Unit,
+    onDismissBanner: () -> Unit,
+    onOpenThread: (PulseNotificationItem) -> Unit,
+    onOpenApp: (PulseNotificationItem) -> Unit,
+    onOpenSelectedApp: (SupportedApp) -> Unit,
+    onToggleStar: (String) -> Unit,
+    onSwipeToggleStar: (String) -> Unit,
+    onSwipeDismissItem: (String) -> Unit,
+    onSwipeStarBlocked: () -> Unit,
+    onMarkGroupRead: (packageName: String, appLabel: String) -> Unit,
+    onClearGroup: (packageName: String, appLabel: String) -> Unit,
+    onOpenReminderDialog: (PulseNotificationItem) -> Unit,
+    onDismissItem: (String) -> Unit,
+    onOpenVaultTab: () -> Unit
+) {
         if (!isNotificationAccessGranted || !bannerDismissed) {
             item(key = "onboarding_banner") {
                 OnboardingIntakeBanner(
@@ -365,7 +439,6 @@ fun FeedTab(
                 }
             }
         }
-    }
 }
 
 @Composable
