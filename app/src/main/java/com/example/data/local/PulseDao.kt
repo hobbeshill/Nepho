@@ -185,4 +185,26 @@ interface PulseDao {
 
     @Query("SELECT imageUri FROM pulse_notifications WHERE imageUri IS NOT NULL")
     suspend fun getAllImageUris(): List<String>
+
+    @Query("SELECT * FROM capture_diagnostics ORDER BY timestamp DESC, id DESC LIMIT :limit")
+    fun observeCaptureDiagnostics(limit: Int = 100): Flow<List<CaptureDiagnosticEntity>>
+
+    @Insert
+    suspend fun insertCaptureDiagnostic(entry: CaptureDiagnosticEntity)
+
+    @Query(
+        "DELETE FROM capture_diagnostics " +
+            "WHERE id NOT IN (SELECT id FROM capture_diagnostics ORDER BY timestamp DESC, id DESC LIMIT :maxRows)"
+    )
+    suspend fun trimCaptureDiagnostics(maxRows: Int = 100)
+
+    @Transaction
+    suspend fun recordCaptureDiagnostic(entry: CaptureDiagnosticEntity, maxRows: Int = 100) {
+        insertCaptureDiagnostic(entry)
+        trimCaptureDiagnostics(maxRows)
+    }
+
+    @Query("DELETE FROM capture_diagnostics")
+    suspend fun clearCaptureDiagnostics()
 }
+

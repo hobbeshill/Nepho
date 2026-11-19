@@ -1,6 +1,9 @@
 package com.example
 
+import android.net.Uri
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.StateRestorationTester
 import androidx.compose.ui.test.junit4.createComposeRule
@@ -8,11 +11,14 @@ import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
+import com.example.data.CachedGifAttachment
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
 import com.example.ui.ComposeCaptureDialog
 import com.example.ui.FeedTab
+import com.example.ui.ThreadPopupDialog
 import com.example.ui.theme.NephoTheme
+import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -91,7 +97,7 @@ class ChromeOsUiTest {
         composeRule.onNodeWithTag("selected_app_link").performScrollTo()
             .assertTextContains("Open Gmail").performClick()
         composeRule.runOnIdle {
-            org.junit.Assert.assertEquals(SupportedApp.GMAIL, openedApp)
+            assertEquals(SupportedApp.GMAIL, openedApp)
             notifications.value = listOf(
                 PulseNotificationItem(
                     key = "test", notificationId = 1, packageName = SupportedApp.GMAIL.packageName,
@@ -108,9 +114,78 @@ class ChromeOsUiTest {
         composeRule.onNodeWithTag("selected_app_link").performScrollTo()
             .assertTextContains("Open Outlook").performClick()
         composeRule.runOnIdle {
-            org.junit.Assert.assertEquals(SupportedApp.OUTLOOK, openedApp)
+            assertEquals(SupportedApp.OUTLOOK, openedApp)
             selected.value = null
         }
         composeRule.onNodeWithTag("selected_app_link").assertDoesNotExist()
+    }
+
+    @Test
+    fun `thread popup exposes gif button, animated preview, remove, and share gif cta for x and messages`() {
+        var sentKey: String? = null
+        var sentText: String? = null
+        var sentGif: CachedGifAttachment? = null
+        val stagedGif = CachedGifAttachment(
+            filePath = "",
+            shareUri = Uri.parse("content://com.aistudio.pulsehub.kxmvpq.fileprovider/shared_gifs/sample.gif")
+        )
+        val xMention = PulseNotificationItem(
+            key = "x_mention_key",
+            notificationId = 42,
+            packageName = SupportedApp.TWITTER.packageName,
+            appLabel = SupportedApp.TWITTER.displayName,
+            title = "@jordan mentioned you",
+            body = "Drop your favorite reaction GIF!",
+            postTime = 1_700_000_000_000L,
+            isRead = false,
+            isDismissed = false,
+            canReply = false, // X mention without inline RemoteInput still supports direct GIF sharing
+            secondaryActions = emptyList(),
+            replies = emptyList(),
+            urls = emptyList(),
+            sourceChannel = "LISTENER"
+        )
+
+        composeRule.setContent {
+            NephoTheme {
+                ThreadPopupDialog(
+                    threadItems = listOf(xMention),
+                    onDismissRequest = {},
+                    onOpenApp = {},
+                    onToggleStar = {},
+                    onOpenReminderDialog = {},
+                    shouldDirectShareGif = true,
+                    onStageGif = { stagedGif },
+                    onSendReply = { key, text, _, gif ->
+                        sentKey = key
+                        sentText = text
+                        sentGif = gif
+                    },
+                    onDismissThread = {},
+                    onSecondaryAction = { _, _ -> },
+                    initialStagedGif = stagedGif
+                )
+            }
+        }
+
+        // GIF picker button, preview card, and Share GIF button are visible even when canReply is false
+        composeRule.onNodeWithTag("thread_attach_gif_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("thread_gif_preview_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("thread_send_reply_button")
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .assertTextContains("Share GIF")
+
+        // Typing a caption and tapping Share GIF dispatches both caption and staged GIF
+        composeRule.onNodeWithTag("thread_reply_input").performTextInput("Haha love this")
+        composeRule.onNodeWithTag("thread_send_reply_button").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals("x_mention_key", sentKey)
+            assertEquals("Haha love this", sentText)
+            assertEquals(stagedGif, sentGif)
+        }
+        // Preview clears after sending
+        composeRule.onNodeWithTag("thread_gif_preview_card").assertDoesNotExist()
     }
 }

@@ -5,7 +5,8 @@ import org.json.JSONObject
 
 data class ReplyEntry(
     val text: String,
-    val sentAt: Long
+    val sentAt: Long,
+    val gifPath: String? = null
 )
 
 data class PulseNotificationItem(
@@ -106,6 +107,9 @@ object PulseJsonCodec {
                 JSONObject().apply {
                     put("text", reply.text)
                     put("sentAt", reply.sentAt)
+                    if (!reply.gifPath.isNullOrBlank()) {
+                        put("gifPath", reply.gifPath)
+                    }
                 }
             )
         }
@@ -120,7 +124,8 @@ object PulseJsonCodec {
                 val obj = array.getJSONObject(idx)
                 ReplyEntry(
                     text = obj.getString("text"),
-                    sentAt = obj.getLong("sentAt")
+                    sentAt = obj.getLong("sentAt"),
+                    gifPath = obj.optString("gifPath").takeIf { it.isNotBlank() }
                 )
             }
         } catch (_: Exception) {

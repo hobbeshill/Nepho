@@ -13,9 +13,10 @@ import androidx.sqlite.db.SupportSQLiteDatabase
         ExtractedLinkEntity::class,
         DigestSettingsEntity::class,
         DigestEventEntity::class,
-        DigestSummaryEntity::class
+        DigestSummaryEntity::class,
+        CaptureDiagnosticEntity::class
     ],
-    version = 5,
+    version = 6,
     exportSchema = false
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -95,6 +96,25 @@ abstract class PulseDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_5_6 = object : Migration(5, 6) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL(
+                    "CREATE TABLE IF NOT EXISTS `capture_diagnostics` (" +
+                        "`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, " +
+                        "`timestamp` INTEGER NOT NULL, " +
+                        "`packageName` TEXT NOT NULL, " +
+                        "`appLabel` TEXT NOT NULL, " +
+                        "`titlePreview` TEXT NOT NULL, " +
+                        "`outcome` TEXT NOT NULL, " +
+                        "`detail` TEXT NOT NULL)"
+                )
+                db.execSQL(
+                    "CREATE INDEX IF NOT EXISTS `index_capture_diagnostics_timestamp` " +
+                        "ON `capture_diagnostics` (`timestamp`)"
+                )
+            }
+        }
+
         fun getInstance(context: Context): PulseDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -102,7 +122,13 @@ abstract class PulseDatabase : RoomDatabase() {
                     PulseDatabase::class.java,
                     "nepho_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
+                    .addMigrations(
+                        MIGRATION_1_2,
+                        MIGRATION_2_3,
+                        MIGRATION_3_4,
+                        MIGRATION_4_5,
+                        MIGRATION_5_6
+                    )
                     .build()
                     .also { INSTANCE = it }
             }

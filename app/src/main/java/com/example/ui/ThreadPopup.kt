@@ -2,10 +2,17 @@ package com.example.ui
 
 import android.net.Uri
 import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.PickVisualMediaRequest
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.content.MediaType
+import androidx.compose.foundation.content.ReceiveContentListener
+import androidx.compose.foundation.content.consume
+import androidx.compose.foundation.content.contentReceiver
+import androidx.compose.foundation.content.hasMediaType
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -22,44 +29,57 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.BasicTextField
+import androidx.compose.foundation.text.input.TextFieldLineLimits
+import androidx.compose.foundation.text.input.clearText
+import androidx.compose.foundation.text.input.rememberTextFieldState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.automirrored.filled.Reply
 import androidx.compose.material.icons.automirrored.filled.Send
 import androidx.compose.material.icons.filled.AlarmOn
 import androidx.compose.material.icons.filled.Close
+import androidx.compose.material.icons.filled.Share
 import androidx.compose.material.icons.filled.Star
-import androidx.compose.material.icons.outlined.Image
 import androidx.compose.material.icons.outlined.AlarmAdd
+import androidx.compose.material.icons.outlined.GifBox
 import androidx.compose.material.icons.outlined.StarBorder
 import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
+import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.HorizontalDivider
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
-import androidx.compose.material3.OutlinedTextField
-import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.rememberCoroutineScope
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Dialog
 import com.example.R
+import com.example.data.CachedGifAttachment
+import com.example.data.GifReplyStore
 import com.example.data.PulseNotificationItem
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderHairline
@@ -68,6 +88,8 @@ import com.example.ui.theme.ElevatedSurface
 import com.example.ui.theme.EmeraldOk
 import com.example.ui.theme.HighSurface
 import com.example.ui.theme.MidnightSurface
+import com.example.ui.theme.ObsidianBackground
+import kotlinx.coroutines.launch
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -75,8 +97,9 @@ import java.util.Locale
 /**
  * Closeable popup that expands a conversation thread (text threads, X/Twitter threads,
  * email chains) when a feed card is tapped. Shows every captured message in the thread,
- * replies sent from Nepho, a reply box, and the same actions available on the card.
+ * replies sent from Nepho, a keyboard-GIF-capable reply composer, and card actions.
  */
+@OptIn(ExperimentalFoundationApi::class)
 @Composable
 fun ThreadPopupDialog(
     threadItems: List<PulseNotificationItem>,
@@ -84,22 +107,65 @@ fun ThreadPopupDialog(
     onOpenApp: (PulseNotificationItem) -> Unit,
     onToggleStar: (String) -> Unit,
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
-    canReplyWithGif: Boolean,
-    onSendReply: (String, String, Uri?) -> Unit,
+    shouldDirectShareGif: Boolean,
+    onStageGif: suspend (Uri) -> CachedGifAttachment?,
+    onGifLoadFailed: () -> Unit = {},
+    onSendReply: (String, String, Uri?, CachedGifAttachment?) -> Unit,
     onDismissThread: (List<String>) -> Unit,
-    onSecondaryAction: (String, String) -> Unit
+    onSecondaryAction: (String, String) -> Unit,
+    initialStagedGif: CachedGifAttachment? = null
 ) {
     if (threadItems.isEmpty()) return
     val latest = threadItems.last()
     val replyTarget = threadItems.lastOrNull { it.canReply }
+    val isDirectGifApp = GifReplyStore.isDirectSharePreferredApp(latest.packageName)
+    val composerTarget = replyTarget ?: latest.takeIf { isDirectGifApp }
     val app = latest.supportedApp
     val timeFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
-    var replyDraft by rememberSaveable(latest.threadId) { mutableStateOf("") }
-    var gifAttachment by rememberSaveable(replyTarget?.key) { mutableStateOf<Uri?>(null) }
+    val scope = rememberCoroutineScope()
+
+    var stagedGif by remember(composerTarget?.key, initialStagedGif) { mutableStateOf(initialStagedGif) }
+    var isStagingGif by remember(composerTarget?.key) { mutableStateOf(false) }
+    var isInputFocused by remember { mutableStateOf(false) }
+
+    val currentOnStageGif by rememberUpdatedState(onStageGif)
+    val currentOnGifLoadFailed by rememberUpdatedState(onGifLoadFailed)
+
+    fun stageGifUri(uri: Uri) {
+        isStagingGif = true
+        scope.launch {
+            val cached = currentOnStageGif(uri)
+            isStagingGif = false
+            if (cached != null) {
+                stagedGif = cached
+            } else {
+                currentOnGifLoadFailed()
+            }
+        }
+    }
+
     val gifPicker = rememberLauncherForActivityResult(
-        contract = ActivityResultContracts.GetContent()
+        contract = ActivityResultContracts.PickVisualMedia()
     ) { uri ->
-        gifAttachment = uri
+        if (uri != null) {
+            stageGifUri(uri)
+        }
+    }
+
+    val receiveContentListener = remember {
+        ReceiveContentListener { transferableContent ->
+            if (transferableContent.hasMediaType(MediaType.Image)) {
+                transferableContent.consume { item ->
+                    val uri = item.uri
+                    if (uri != null) {
+                        stageGifUri(uri)
+                    }
+                    uri != null
+                }
+            } else {
+                transferableContent
+            }
+        }
     }
 
     Dialog(onDismissRequest = onDismissRequest) {
@@ -190,7 +256,7 @@ fun ThreadPopupDialog(
                     modifier = Modifier
                         .fillMaxWidth()
                         .weight(1f, fill = false)
-                        .heightIn(max = 380.dp)
+                        .heightIn(max = 360.dp)
                         .testTag("thread_message_list"),
                     verticalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
@@ -237,35 +303,50 @@ fun ThreadPopupDialog(
                                     color = HighSurface,
                                     modifier = Modifier.fillMaxWidth()
                                 ) {
-                                    Row(
+                                    Column(
                                         modifier = Modifier
                                             .fillMaxWidth()
                                             .padding(horizontal = 10.dp, vertical = 8.dp),
-                                        horizontalArrangement = Arrangement.SpaceBetween,
-                                        verticalAlignment = Alignment.CenterVertically
+                                        verticalArrangement = Arrangement.spacedBy(6.dp)
                                     ) {
                                         Row(
-                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
-                                            verticalAlignment = Alignment.CenterVertically,
-                                            modifier = Modifier.weight(1f)
+                                            modifier = Modifier.fillMaxWidth(),
+                                            horizontalArrangement = Arrangement.SpaceBetween,
+                                            verticalAlignment = Alignment.CenterVertically
                                         ) {
-                                            Icon(
-                                                imageVector = Icons.AutoMirrored.Filled.Reply,
-                                                contentDescription = null,
-                                                tint = EmeraldOk,
-                                                modifier = Modifier.size(14.dp)
-                                            )
+                                            Row(
+                                                horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                modifier = Modifier.weight(1f)
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.AutoMirrored.Filled.Reply,
+                                                    contentDescription = null,
+                                                    tint = EmeraldOk,
+                                                    modifier = Modifier.size(14.dp)
+                                                )
+                                                Text(
+                                                    text = "You: ${reply.text}",
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurface
+                                                )
+                                            }
                                             Text(
-                                                text = "You: ${reply.text}",
-                                                style = MaterialTheme.typography.bodySmall,
-                                                color = MaterialTheme.colorScheme.onSurface
+                                                text = timeFormatter.format(Date(reply.sentAt)),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = EmeraldOk
                                             )
                                         }
-                                        Text(
-                                            text = timeFormatter.format(Date(reply.sentAt)),
-                                            style = MaterialTheme.typography.labelSmall,
-                                            color = EmeraldOk
-                                        )
+                                        if (!reply.gifPath.isNullOrBlank()) {
+                                            NotificationMediaImage(
+                                                source = reply.gifPath,
+                                                contentDescription = stringResource(R.string.gif_sent_reply_description),
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .testTag("thread_sent_reply_gif"),
+                                                maxHeight = 140.dp
+                                            )
+                                        }
                                     }
                                 }
                             }
@@ -273,93 +354,231 @@ fun ThreadPopupDialog(
                     }
                 }
 
-                if (replyTarget != null) {
-                    if (gifAttachment != null) {
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
-                        ) {
-                            Text(
-                                text = stringResource(R.string.gif_attached),
-                                style = MaterialTheme.typography.labelMedium,
-                                color = CyanPulse
+                if (composerTarget != null) {
+                    key(latest.threadId) {
+                        val textFieldState = rememberTextFieldState()
+                        val replyDraft = textFieldState.text.toString()
+                        val activeGif = stagedGif
+                        val canSubmit = !isStagingGif && (
+                            activeGif != null || (replyTarget != null && replyDraft.isNotBlank())
                             )
-                            IconButton(
-                                onClick = { gifAttachment = null },
+                        val isDirectShareAction = activeGif != null && shouldDirectShareGif
+
+                        if (isStagingGif || activeGif != null) {
+                            Surface(
+                                shape = RoundedCornerShape(14.dp),
+                                color = ElevatedSurface,
+                                border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.45f)),
                                 modifier = Modifier
-                                    .minimumInteractiveComponentSize()
-                                    .testTag("thread_remove_gif_button")
+                                    .fillMaxWidth()
+                                    .testTag("thread_gif_preview_card")
                             ) {
-                                Icon(
-                                    imageVector = Icons.Default.Close,
-                                    contentDescription = stringResource(R.string.action_remove_gif),
-                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
-                                )
+                                Column(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(10.dp),
+                                    verticalArrangement = Arrangement.spacedBy(8.dp)
+                                ) {
+                                    Row(
+                                        modifier = Modifier.fillMaxWidth(),
+                                        horizontalArrangement = Arrangement.SpaceBetween,
+                                        verticalAlignment = Alignment.CenterVertically
+                                    ) {
+                                        Row(
+                                            verticalAlignment = Alignment.CenterVertically,
+                                            horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                            modifier = Modifier.weight(1f)
+                                        ) {
+                                            if (isStagingGif) {
+                                                CircularProgressIndicator(
+                                                    modifier = Modifier.size(16.dp),
+                                                    strokeWidth = 2.dp,
+                                                    color = CyanPulse
+                                                )
+                                                Text(
+                                                    text = stringResource(R.string.gif_loading),
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = CyanPulse
+                                                )
+                                            } else {
+                                                Icon(
+                                                    imageVector = Icons.Outlined.GifBox,
+                                                    contentDescription = null,
+                                                    tint = CyanPulse,
+                                                    modifier = Modifier.size(18.dp)
+                                                )
+                                                Text(
+                                                    text = if (shouldDirectShareGif) {
+                                                        stringResource(R.string.gif_ready_to_share, latest.appLabel)
+                                                    } else {
+                                                        stringResource(R.string.gif_attached)
+                                                    },
+                                                    style = MaterialTheme.typography.labelMedium,
+                                                    color = CyanPulse,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                        }
+                                        if (!isStagingGif) {
+                                            IconButton(
+                                                onClick = { stagedGif = null },
+                                                modifier = Modifier
+                                                    .minimumInteractiveComponentSize()
+                                                    .testTag("thread_remove_gif_button")
+                                            ) {
+                                                Icon(
+                                                    imageVector = Icons.Default.Close,
+                                                    contentDescription = stringResource(R.string.action_remove_gif),
+                                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                                )
+                                            }
+                                        }
+                                    }
+                                    if (activeGif != null) {
+                                        NotificationMediaImage(
+                                            source = activeGif.filePath.ifBlank { activeGif.shareUri.toString() },
+                                            contentDescription = stringResource(R.string.gif_preview_description),
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .testTag("thread_gif_preview_image"),
+                                            maxHeight = 140.dp
+                                        )
+                                    }
+                                }
                             }
                         }
-                    }
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(8.dp),
-                        verticalAlignment = Alignment.CenterVertically
-                    ) {
-                        OutlinedTextField(
-                            value = replyDraft,
-                            onValueChange = { replyDraft = it },
-                            modifier = Modifier
-                                .weight(1f)
-                                .testTag("thread_reply_input"),
-                            placeholder = {
-                                Text(
-                                    text = stringResource(R.string.reply_placeholder),
-                                    style = MaterialTheme.typography.bodySmall
-                                )
-                            },
-                            singleLine = true,
-                            shape = RoundedCornerShape(12.dp),
-                            colors = OutlinedTextFieldDefaults.colors(
-                                focusedContainerColor = ElevatedSurface,
-                                unfocusedContainerColor = ElevatedSurface,
-                                focusedBorderColor = CyanPulse,
-                                unfocusedBorderColor = BorderHairline
-                            )
-                        )
-                        if (canReplyWithGif) {
+
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp),
+                            verticalAlignment = Alignment.CenterVertically
+                        ) {
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = ElevatedSurface,
+                                border = BorderStroke(
+                                    width = 1.dp,
+                                    color = if (isInputFocused) CyanPulse else BorderHairline
+                                ),
+                                modifier = Modifier
+                                    .weight(1f)
+                                    .heightIn(min = 48.dp)
+                            ) {
+                                Box(
+                                    modifier = Modifier
+                                        .fillMaxWidth()
+                                        .padding(horizontal = 12.dp, vertical = 12.dp),
+                                    contentAlignment = Alignment.CenterStart
+                                ) {
+                                    BasicTextField(
+                                        state = textFieldState,
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .contentReceiver(receiveContentListener)
+                                            .onFocusChanged { isInputFocused = it.isFocused }
+                                            .testTag("thread_reply_input"),
+                                        textStyle = MaterialTheme.typography.bodyMedium.copy(
+                                            color = MaterialTheme.colorScheme.onSurface
+                                        ),
+                                        cursorBrush = SolidColor(CyanPulse),
+                                        lineLimits = TextFieldLineLimits.MultiLine(maxHeightInLines = 3),
+                                        decorator = { innerTextField ->
+                                            if (textFieldState.text.isEmpty()) {
+                                                Text(
+                                                    text = stringResource(
+                                                        if (replyTarget != null) {
+                                                            R.string.reply_placeholder
+                                                        } else {
+                                                            R.string.reply_gif_only_placeholder
+                                                        }
+                                                    ),
+                                                    style = MaterialTheme.typography.bodySmall,
+                                                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                                    maxLines = 1,
+                                                    overflow = TextOverflow.Ellipsis
+                                                )
+                                            }
+                                            innerTextField()
+                                        }
+                                    )
+                                }
+                            }
+
                             IconButton(
-                                onClick = { gifPicker.launch("image/gif") },
+                                onClick = {
+                                    gifPicker.launch(
+                                        PickVisualMediaRequest(
+                                            ActivityResultContracts.PickVisualMedia.SingleMimeType("image/gif")
+                                        )
+                                    )
+                                },
                                 modifier = Modifier
                                     .minimumInteractiveComponentSize()
                                     .testTag("thread_attach_gif_button")
                             ) {
                                 Icon(
-                                    imageVector = Icons.Outlined.Image,
+                                    imageVector = Icons.Outlined.GifBox,
                                     contentDescription = stringResource(R.string.action_attach_gif),
                                     tint = CyanPulse
                                 )
                             }
-                        }
-                        Button(
-                            onClick = {
-                                if (replyDraft.isNotBlank() || gifAttachment != null) {
-                                    onSendReply(replyTarget.key, replyDraft, gifAttachment)
-                                    replyDraft = ""
-                                    gifAttachment = null
-                                }
-                            },
-                            enabled = replyDraft.isNotBlank() || gifAttachment != null,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("thread_send_reply_button"),
-                            contentPadding = PaddingValues(horizontal = 14.dp, vertical = 12.dp)
-                        ) {
-                            Icon(
-                                imageVector = Icons.AutoMirrored.Filled.Send,
-                                contentDescription = stringResource(R.string.action_send),
-                                modifier = Modifier.size(16.dp)
-                            )
-                            Spacer(Modifier.width(4.dp))
-                            Text(stringResource(R.string.action_send))
+
+                            val buttonDescription = if (isDirectShareAction) {
+                                stringResource(R.string.action_share_gif_to_app, latest.appLabel)
+                            } else {
+                                stringResource(R.string.action_send)
+                            }
+                            Button(
+                                onClick = {
+                                    if (canSubmit) {
+                                        val selectedGif = stagedGif
+                                        onSendReply(
+                                            composerTarget.key,
+                                            replyDraft,
+                                            selectedGif?.shareUri,
+                                            selectedGif
+                                        )
+                                        textFieldState.clearText()
+                                        stagedGif = null
+                                    }
+                                },
+                                enabled = canSubmit,
+                                colors = if (isDirectShareAction) {
+                                    ButtonDefaults.buttonColors(
+                                        containerColor = CyanPulse,
+                                        contentColor = ObsidianBackground
+                                    )
+                                } else {
+                                    ButtonDefaults.buttonColors()
+                                },
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .semantics { contentDescription = buttonDescription }
+                                    .testTag("thread_send_reply_button"),
+                                contentPadding = PaddingValues(horizontal = 12.dp, vertical = 12.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (isDirectShareAction) {
+                                        Icons.Default.Share
+                                    } else {
+                                        Icons.AutoMirrored.Filled.Send
+                                    },
+                                    contentDescription = null,
+                                    modifier = Modifier.size(16.dp)
+                                )
+                                Spacer(Modifier.width(4.dp))
+                                Text(
+                                    text = stringResource(
+                                        if (isDirectShareAction) {
+                                            R.string.action_share_gif
+                                        } else {
+                                            R.string.action_send
+                                        }
+                                    ),
+                                    maxLines = 1
+                                )
+                            }
                         }
                     }
                 }

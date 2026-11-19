@@ -21,6 +21,7 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.clickable
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.DynamicFeed
 import androidx.compose.material.icons.filled.EditNote
@@ -28,6 +29,7 @@ import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
+import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.Badge
@@ -73,7 +75,9 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.R
+import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderHairline
+import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
 import com.example.ui.theme.EmeraldOk
@@ -110,12 +114,15 @@ fun NephoApp(
     val digestSettings by viewModel.digestSettings.collectAsStateWithLifecycle()
     val digestSummaries by viewModel.digestSummaries.collectAsStateWithLifecycle()
     val openDigest by viewModel.openDigest.collectAsStateWithLifecycle()
+    val listenerHealth by viewModel.listenerHealth.collectAsStateWithLifecycle()
+    val captureDiagnostics by viewModel.captureDiagnostics.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by rememberSaveable { mutableStateOf(false) }
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
     var showDigestDialog by rememberSaveable { mutableStateOf(false) }
+    var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -178,6 +185,19 @@ fun NephoApp(
         )
     }
 
+    if (showDiagnosticsDialog) {
+        CaptureDiagnosticsDialog(
+            health = listenerHealth,
+            diagnostics = captureDiagnostics,
+            onRequestRebind = viewModel::requestListenerRebind,
+            onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
+            onRequestNotificationPermission = onRequestNotificationPermission,
+            onOpenBatterySettings = viewModel::openBatteryOptimizationSettings,
+            onClearLog = viewModel::clearCaptureDiagnostics,
+            onDismiss = { showDiagnosticsDialog = false }
+        )
+    }
+
     reminderTargetItem?.let { target ->
         SetReminderDialog(
             item = target,
@@ -203,14 +223,20 @@ fun NephoApp(
         }
     }
     if (threadItems.isNotEmpty()) {
+        val latestThreadItem = threadItems.last()
+        val gifReplyTarget = threadItems.lastOrNull { it.canReply } ?: latestThreadItem
         ThreadPopupDialog(
             threadItems = threadItems,
             onDismissRequest = { threadTargetId = null },
             onOpenApp = viewModel::openSourceApp,
             onToggleStar = viewModel::toggleNotificationStar,
             onOpenReminderDialog = { item -> reminderTargetItem = item },
-            canReplyWithGif = threadItems.lastOrNull { it.canReply }
-                ?.let { viewModel.canSendGifReply(it.key) } == true,
+            shouldDirectShareGif = viewModel.shouldDirectShareGif(
+                key = gifReplyTarget.key,
+                packageName = latestThreadItem.packageName
+            ),
+            onStageGif = viewModel::stageGifAttachment,
+            onGifLoadFailed = viewModel::notifyGifLoadFailed,
             onSendReply = viewModel::sendInlineReply,
             onDismissThread = { keys -> keys.forEach { viewModel.dismissNotification(it) } },
             onSecondaryAction = viewModel::executeSecondaryAction
@@ -260,11 +286,16 @@ fun NephoApp(
                                         text = stringResource(R.string.app_name),
                                         style = MaterialTheme.typography.titleLarge
                                     )
+                                    val healthDotColor = when {
+                                        !listenerHealth.isAccessGranted -> CrimsonError
+                                        listenerHealth.isListenerConnected -> EmeraldOk
+                                        else -> AmberSignal
+                                    }
                                     Box(
                                         modifier = Modifier
                                             .size(8.dp)
                                             .clip(CircleShape)
-                                            .background(EmeraldOk)
+                                            .background(healthDotColor)
                                     )
                                 }
                                 val sinceText = timeFmt.format(Date(sessionOpenedAt))
@@ -272,7 +303,13 @@ fun NephoApp(
                                     shape = RoundedCornerShape(8.dp),
                                     color = MidnightSurface,
                                     border = BorderStroke(1.dp, BorderHairline),
-                                    modifier = Modifier.testTag("session_status_pill")
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable {
+                                            viewModel.refreshAccessAndPermissions()
+                                            showDiagnosticsDialog = true
+                                        }
+                                        .testTag("session_status_pill")
                                 ) {
                                     Text(
                                         text = stringResource(R.string.status_window_pill, sinceText),
@@ -347,6 +384,18 @@ fun NephoApp(
                                             showShadePrefsDialog = true
                                         },
                                         modifier = Modifier.testTag("menu_shade_preferences")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_capture_diagnostics)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.HealthAndSafety, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            viewModel.refreshAccessAndPermissions()
+                                            showDiagnosticsDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_capture_diagnostics")
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_compose_capture)) },

@@ -2,6 +2,7 @@ package com.example.data
 
 import android.app.ActivityOptions
 import android.app.PendingIntent
+import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,6 +11,7 @@ import android.os.Bundle
 import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
+import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.ExtractedLinkEntity
 import com.example.data.local.DigestEventEntity
 import com.example.data.local.PulseDao
@@ -84,6 +86,12 @@ class PulseRepository private constructor(
             ?.any { input -> input.allowedDataTypes.any(::supportsGifMimeType) } == true
     }
 
+    fun shouldDirectShareGif(key: String, packageName: String): Boolean =
+        GifReplyStore.shouldDirectShareGif(packageName, canSendGifReply(key))
+
+    fun stageGifAttachment(sourceUri: Uri): CachedGifAttachment? =
+        GifReplyStore.cacheGifFromUri(appContext, sourceUri)
+
     fun refreshRetentionTicker() {
         retentionCutoffTicker.value = computeRetentionCutoff()
     }
@@ -110,6 +118,34 @@ class PulseRepository private constructor(
         dao.observeActiveLinks(effectiveCutoff).map { entities ->
             entities.map { it.toDomain() }
         }
+    }
+
+    val captureDiagnosticsFlow: Flow<List<CaptureDiagnosticEntity>> =
+        dao.observeCaptureDiagnostics(MAX_DIAGNOSTIC_ROWS)
+
+    suspend fun recordCaptureDiagnostic(
+        packageName: String,
+        appLabel: String,
+        titlePreview: String,
+        outcome: CaptureOutcome,
+        detail: String,
+        timestamp: Long = System.currentTimeMillis()
+    ) {
+        dao.recordCaptureDiagnostic(
+            entry = CaptureDiagnosticEntity(
+                timestamp = timestamp,
+                packageName = packageName,
+                appLabel = appLabel,
+                titlePreview = titlePreview.take(80),
+                outcome = outcome.name,
+                detail = detail
+            ),
+            maxRows = MAX_DIAGNOSTIC_ROWS
+        )
+    }
+
+    suspend fun clearCaptureDiagnostics() {
+        dao.clearCaptureDiagnostics()
     }
 
     suspend fun initializeSession(): Long {
@@ -149,8 +185,10 @@ class PulseRepository private constructor(
         sourceChannel: String,
         imageUri: String? = null
     ): IngestResult {
+        val existing = dao.getByKey(key)
         val parsedUrls = UrlExtractor.extractUrls(title, body)
         val urlStrings = parsedUrls.map { it.url }
+        val preserveStar = existing?.isStarred == true
 
         val entity = PulseNotificationEntity(
             key = key,
@@ -164,10 +202,13 @@ class PulseRepository private constructor(
             isDismissed = false,
             canReply = canReply,
             secondaryActionsJson = PulseJsonCodec.encodeStringList(secondaryActions),
-            repliesJson = "[]",
+            repliesJson = existing?.repliesJson ?: "[]",
             urlsJson = PulseJsonCodec.encodeStringList(urlStrings),
             imageUri = imageUri,
-            sourceChannel = sourceChannel
+            sourceChannel = sourceChannel,
+            isStarred = preserveStar,
+            reminderAt = existing?.reminderAt,
+            reminderNote = existing?.reminderNote
         )
 
         val linkEntities = parsedUrls.map { parsed ->
@@ -180,7 +221,8 @@ class PulseRepository private constructor(
                 packageName = packageName,
                 appLabel = appLabel,
                 senderTitle = title,
-                postTime = postTime
+                postTime = postTime,
+                isStarred = preserveStar
             )
         }
 
@@ -248,41 +290,173 @@ class PulseRepository private constructor(
         replyText: String,
         gifUri: Uri? = null,
         fromShadeReceiver: Boolean = false
-    ): Boolean {
-        val trimmed = replyText.trim()
-        if (trimmed.isEmpty() && gifUri == null) return false
+    ): Boolean = sendReplyWithResult(
+        key = key,
+        replyText = replyText,
+        gifAttachment = null,
+        gifUri = gifUri,
+        fromShadeReceiver = fromShadeReceiver
+    ).success
 
-        val existing = dao.getByKey(key) ?: return false
+    suspend fun sendReplyWithResult(
+        key: String,
+        replyText: String,
+        gifAttachment: CachedGifAttachment? = null,
+        gifUri: Uri? = null,
+        fromShadeReceiver: Boolean = false
+    ): ReplyDispatchResult {
+        val trimmed = replyText.trim()
+        val hasGif = gifAttachment != null || gifUri != null
+        if (trimmed.isEmpty() && !hasGif) return ReplyDispatchResult(false)
+
+        val existing = dao.getByKey(key) ?: return ReplyDispatchResult(false)
         val nativeHandle = actionHandleMap[key]
-        if (gifUri != null && (
-                Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                    gifUri.scheme != "content" ||
-                    !canSendGifReply(key)
+
+        if (hasGif) {
+            val supportsNativeGif = canSendGifReply(key)
+            val useDirectShare = GifReplyStore.shouldDirectShareGif(
+                packageName = existing.packageName,
+                supportsNativeGifReply = supportsNativeGif
+            )
+
+            val resolvedAttachment: CachedGifAttachment? = when {
+                gifAttachment != null -> gifAttachment
+                gifUri != null && gifUri.authority == GifReplyStore.fileProviderAuthority(appContext) ->
+                    CachedGifAttachment(filePath = "", shareUri = gifUri)
+                gifUri != null -> GifReplyStore.cacheGifFromUri(appContext, gifUri)
+                else -> null
+            }
+
+            if (useDirectShare) {
+                val shareUri = resolvedAttachment?.shareUri
+                    ?: return ReplyDispatchResult(
+                        success = false,
+                        deliveryMode = GifDeliveryMode.DIRECT_SHARE
+                    )
+                val spec = GifReplyStore.buildDirectShareIntent(
+                    context = appContext,
+                    targetPackage = existing.packageName,
+                    targetAppLabel = existing.appLabel,
+                    gifUri = shareUri,
+                    caption = trimmed.ifEmpty { null }
                 )
-        ) {
-            return false
-        }
-        val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
-            (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
-        var dispatched = false
-        if (shouldDispatchIntent && nativeHandle != null) {
-            try {
-                val fillInIntent = Intent()
-                val frameworkInputs = nativeHandle.frameworkRemoteInputs
-                val compatInput = nativeHandle.compatRemoteInput
-                if (!frameworkInputs.isNullOrEmpty()) {
-                    if (gifUri != null) {
+                val launched = try {
+                    appContext.startActivity(spec.intent)
+                    true
+                } catch (e: ActivityNotFoundException) {
+                    Log.w("PulseRepository", "No activity available to share GIF for ${existing.packageName}", e)
+                    false
+                } catch (e: SecurityException) {
+                    Log.w("PulseRepository", "Security exception while sharing GIF for ${existing.packageName}", e)
+                    false
+                }
+                if (!launched) {
+                    return ReplyDispatchResult(
+                        success = false,
+                        deliveryMode = GifDeliveryMode.DIRECT_SHARE,
+                        usedChooserFallback = spec.usedChooserFallback
+                    )
+                }
+
+                val savedPath = resolvedAttachment.filePath.takeIf { it.isNotBlank() }
+                recordReplyAndDismiss(
+                    key = key,
+                    existing = existing,
+                    replyText = trimmed.ifEmpty { "GIF attachment" },
+                    gifPath = savedPath
+                )
+                return ReplyDispatchResult(
+                    success = true,
+                    deliveryMode = GifDeliveryMode.DIRECT_SHARE,
+                    usedChooserFallback = spec.usedChooserFallback
+                )
+            }
+
+            // Native RemoteInput image/gif path for non-Messages/X apps that advertise GIF support.
+            val nativeGifUri = resolvedAttachment?.shareUri ?: gifUri
+            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
+                nativeGifUri == null ||
+                nativeGifUri.scheme != "content" ||
+                !supportsNativeGif
+            ) {
+                return ReplyDispatchResult(
+                    success = false,
+                    deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
+                )
+            }
+            val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
+                (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
+            var dispatched = false
+            if (shouldDispatchIntent && nativeHandle != null) {
+                try {
+                    val frameworkInputs = nativeHandle.frameworkRemoteInputs
+                    if (!frameworkInputs.isNullOrEmpty()) {
+                        runCatching {
+                            appContext.grantUriPermission(
+                                existing.packageName,
+                                nativeGifUri,
+                                Intent.FLAG_GRANT_READ_URI_PERMISSION
+                            )
+                        }
+                        val fillInIntent = Intent()
                         frameworkInputs
                             .filter { input -> input.allowedDataTypes.any(::supportsGifMimeType) }
                             .forEach { input ->
                                 android.app.RemoteInput.addDataResultToIntent(
                                     input,
                                     fillInIntent,
-                                    mapOf(GIF_MIME_TYPE to gifUri)
+                                    mapOf(GIF_MIME_TYPE to nativeGifUri)
                                 )
                             }
                         fillInIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                        val resultsBundle = Bundle().apply {
+                            frameworkInputs.forEach { ri ->
+                                if (trimmed.isNotEmpty()) putCharSequence(ri.resultKey, trimmed)
+                            }
+                        }
+                        android.app.RemoteInput.addResultsToIntent(
+                            frameworkInputs,
+                            fillInIntent,
+                            resultsBundle
+                        )
+                        nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
+                        dispatched = true
                     }
+                } catch (_: PendingIntent.CanceledException) {
+                    return ReplyDispatchResult(
+                        success = false,
+                        deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
+                    )
+                }
+            }
+            if (!dispatched) {
+                return ReplyDispatchResult(
+                    success = false,
+                    deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
+                )
+            }
+            val savedPath = resolvedAttachment?.filePath?.takeIf { it.isNotBlank() }
+            recordReplyAndDismiss(
+                key = key,
+                existing = existing,
+                replyText = trimmed.ifEmpty { "GIF attachment" },
+                gifPath = savedPath
+            )
+            return ReplyDispatchResult(
+                success = true,
+                deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
+            )
+        }
+
+        // Standard text-only inline reply path.
+        val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
+            (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
+        if (shouldDispatchIntent && nativeHandle != null) {
+            try {
+                val fillInIntent = Intent()
+                val frameworkInputs = nativeHandle.frameworkRemoteInputs
+                val compatInput = nativeHandle.compatRemoteInput
+                if (!frameworkInputs.isNullOrEmpty()) {
                     val resultsBundle = Bundle().apply {
                         frameworkInputs.forEach { ri ->
                             if (trimmed.isNotEmpty()) putCharSequence(ri.resultKey, trimmed)
@@ -294,9 +468,7 @@ class PulseRepository private constructor(
                         resultsBundle
                     )
                     nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
-                    dispatched = true
                 } else if (compatInput != null) {
-                    if (gifUri != null) return false
                     val resultsBundle = Bundle().apply {
                         putCharSequence(compatInput.resultKey, trimmed)
                     }
@@ -306,26 +478,38 @@ class PulseRepository private constructor(
                         resultsBundle
                     )
                     nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
-                    dispatched = true
                 }
             } catch (_: PendingIntent.CanceledException) {
-                if (gifUri != null) return false
                 // Local intent expired; still record reply in thread
             }
         }
-        if (gifUri != null && !dispatched) return false
 
+        recordReplyAndDismiss(
+            key = key,
+            existing = existing,
+            replyText = trimmed,
+            gifPath = null
+        )
+        return ReplyDispatchResult(success = true)
+    }
+
+    private suspend fun recordReplyAndDismiss(
+        key: String,
+        existing: PulseNotificationEntity,
+        replyText: String,
+        gifPath: String?
+    ) {
         val currentReplies = PulseJsonCodec.decodeReplies(existing.repliesJson).toMutableList()
         currentReplies.add(
             ReplyEntry(
-                text = trimmed.ifEmpty { "GIF attachment" },
-                sentAt = System.currentTimeMillis()
+                text = replyText,
+                sentAt = System.currentTimeMillis(),
+                gifPath = gifPath
             )
         )
         dao.updateReplies(key, PulseJsonCodec.encodeReplies(currentReplies))
         // Responding completes the alert: clear it from the feed and the shade
         dismissNotification(key)
-        return true
     }
 
     suspend fun dismissNotification(key: String) {
@@ -427,11 +611,13 @@ class PulseRepository private constructor(
 
     /**
      * Mirrors a removal that happened outside Nepho (user or source app cleared the
-     * original notification) into the Nepho feed and shade.
+     * original notification) into the Nepho feed and shade. Ignores stale removals
+     * whose [removedPostTime] is older than the currently stored update for [key].
      */
-    suspend fun syncDismissalFromSystem(key: String): Boolean {
+    suspend fun syncDismissalFromSystem(key: String, removedPostTime: Long? = null): Boolean {
         val existing = dao.getByKey(key) ?: return false
         if (existing.isDismissed) return false
+        if (removedPostTime != null && existing.postTime > removedPostTime) return false
         dismissNotification(key)
         return true
     }
@@ -453,17 +639,25 @@ class PulseRepository private constructor(
     companion object {
         const val RETENTION_WINDOW_MS = 86_400_000L
         const val GIF_MIME_TYPE = "image/gif"
+        const val MAX_DIAGNOSTIC_ROWS = 100
 
         @Volatile
         private var INSTANCE: PulseRepository? = null
 
         fun getInstance(context: Context): PulseRepository {
-            return INSTANCE ?: synchronized(this) {
-                val appCtx = context.applicationContext
-                val db = PulseDatabase.getInstance(appCtx)
-                val prefs = SessionPreferences(appCtx)
-                INSTANCE ?: PulseRepository(appCtx, db.pulseDao(), prefs).also {
-                    INSTANCE = it
+            val appCtx = context.applicationContext
+            val existing = INSTANCE
+            if (existing != null && existing.appContext === appCtx) return existing
+            return synchronized(this) {
+                val current = INSTANCE
+                if (current != null && current.appContext === appCtx) {
+                    current
+                } else {
+                    val db = PulseDatabase.getInstance(appCtx)
+                    val prefs = SessionPreferences(appCtx)
+                    PulseRepository(appCtx, db.pulseDao(), prefs).also {
+                        INSTANCE = it
+                    }
                 }
             }
         }
@@ -473,10 +667,36 @@ class PulseRepository private constructor(
 private fun supportsGifMimeType(mimeType: String): Boolean =
     mimeType == PulseRepository.GIF_MIME_TYPE || mimeType == "image/*"
 
+enum class GifDeliveryMode {
+    DIRECT_SHARE,
+    NATIVE_REMOTE_INPUT
+}
+
+data class ReplyDispatchResult(
+    val success: Boolean,
+    val deliveryMode: GifDeliveryMode? = null,
+    val usedChooserFallback: Boolean = false
+)
+
 data class IngestResult(
     val extractedLinkCount: Int,
     val purgedExpiredCount: Int
 )
+
+enum class CaptureOutcome {
+    CAPTURED,
+    CAPTURED_CATCHUP,
+    SKIPPED_OPTED_OUT,
+    SKIPPED_BLOCKED,
+    SKIPPED_GROUP_SUMMARY,
+    SKIPPED_PRE_SESSION,
+    SKIPPED_ONGOING,
+    SYNCED_REMOVAL,
+    SELF_CANCEL_IGNORED,
+    FALLBACK_KEPT_ORIGINAL,
+    LISTENER_CONNECTED,
+    LISTENER_DISCONNECTED
+}
 
 data class DismissedItemSnapshot(
     val key: String,

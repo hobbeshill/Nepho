@@ -11,12 +11,17 @@ import android.graphics.BitmapFactory
 import android.graphics.drawable.Icon
 import android.net.Uri
 import android.os.Process
+import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
 import androidx.room.Room
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.example.data.CaptureOutcome
+import com.example.data.GifDeliveryMode
+import com.example.data.GifReplyStore
 import com.example.data.NativeReplyHandle
 import com.example.data.NotificationImageStore
+import com.example.data.PulseJsonCodec
 import com.example.data.PulseRepository
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
@@ -63,6 +68,13 @@ class ExampleRobolectricTest {
     fun setUpWorkManager() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
+        // Robolectric creates a fresh temp cacheDir per test method while FileProvider caches
+        // resolved PathStrategy roots statically across tests in the same sandbox.
+        runCatching {
+            val cacheField = androidx.core.content.FileProvider::class.java.getDeclaredField("sCache")
+            cacheField.isAccessible = true
+            (cacheField.get(null) as? MutableMap<*, *>)?.clear()
+        }
     }
 
     @Test
@@ -123,8 +135,11 @@ class ExampleRobolectricTest {
     fun `version 4 database migrates without losing notifications`() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val name = "digest-migration-${UUID.randomUUID()}"
-        val builder = { Room.databaseBuilder(context, PulseDatabase::class.java, name)
-            .addMigrations(PulseDatabase.MIGRATION_4_5).build() }
+        val builder = {
+            Room.databaseBuilder(context, PulseDatabase::class.java, name)
+                .addMigrations(PulseDatabase.MIGRATION_4_5, PulseDatabase.MIGRATION_5_6)
+                .build()
+        }
         try {
             val original = builder()
             val entity = PulseNotificationEntity(
@@ -137,12 +152,14 @@ class ExampleRobolectricTest {
                 db.execSQL("DROP TABLE digest_events")
                 db.execSQL("DROP TABLE digest_settings")
                 db.execSQL("DROP TABLE digest_summaries")
+                db.execSQL("DROP TABLE capture_diagnostics")
                 db.version = 4
             }
             val migrated = builder()
             try {
                 assertEquals("Body", migrated.pulseDao().getByKey("retained")?.body)
                 assertTrue(migrated.pulseDao().getDigestEventsBefore(Long.MAX_VALUE).isEmpty())
+                assertTrue(migrated.pulseDao().observeCaptureDiagnostics().first().isEmpty())
             } finally {
                 migrated.close()
             }
@@ -645,7 +662,7 @@ class ExampleRobolectricTest {
 
     @Test
     @Config(sdk = [36])
-    fun `gif replies require destination support and deliver the selected uri`() = runTest {
+    fun `native gif replies deliver the selected uri for non-direct-share apps that advertise gif support`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = PulseRepository.getInstance(context)
         repo.resetSession()
@@ -671,16 +688,19 @@ class ExampleRobolectricTest {
         ingest(
             repo = repo,
             key = "gif_reply_test_key",
-            app = SupportedApp.MESSAGES,
-            title = "Jordan",
+            app = SupportedApp.GROUPME,
+            title = "Team Chat",
             body = "Send a GIF",
             postTime = now,
             canReply = true
         )
 
         assertTrue(repo.canSendGifReply("gif_reply_test_key"))
+        assertFalse(repo.shouldDirectShareGif("gif_reply_test_key", SupportedApp.GROUPME.packageName))
         val gifUri = Uri.parse("content://com.example.test/gifs/reaction.gif")
-        assertTrue(repo.sendInlineReply("gif_reply_test_key", "", gifUri))
+        val result = repo.sendReplyWithResult("gif_reply_test_key", "", gifUri = gifUri)
+        assertTrue(result.success)
+        assertEquals(GifDeliveryMode.NATIVE_REMOTE_INPUT, result.deliveryMode)
 
         val sentIntent = shadowOf(context as android.app.Application).nextStartedActivity
         assertEquals(
@@ -693,26 +713,11 @@ class ExampleRobolectricTest {
 
     @Test
     @Config(sdk = [36])
-    fun `gif replies are rejected when destination only supports text`() = runTest {
+    fun `unreadable gif uri fails cleanly without dismissing the alert`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repo = PulseRepository.getInstance(context)
         repo.resetSession()
-        val key = "text_only_reply_test_key"
-        val pendingIntent = PendingIntent.getActivity(
-            context,
-            211,
-            Intent(context, MainActivity::class.java),
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_MUTABLE
-        )
-        repo.registerNativeActionHandle(
-            key,
-            NativeReplyHandle(
-                replyPendingIntent = pendingIntent,
-                frameworkRemoteInputs = arrayOf(
-                    android.app.RemoteInput.Builder("reply").build()
-                )
-            )
-        )
+        val key = "unreadable_gif_reply_key"
         ingest(
             repo = repo,
             key = key,
@@ -723,15 +728,189 @@ class ExampleRobolectricTest {
             canReply = true
         )
 
-        assertFalse(repo.canSendGifReply(key))
-        assertFalse(
-            repo.sendInlineReply(
-                key,
-                "",
-                Uri.parse("content://com.example.test/gifs/reaction.gif")
-            )
+        assertTrue(repo.shouldDirectShareGif(key, SupportedApp.MESSAGES.packageName))
+        val result = repo.sendReplyWithResult(
+            key = key,
+            replyText = "",
+            gifUri = Uri.parse("content://com.example.nonexistent/gifs/missing.gif")
         )
+        assertFalse(result.success)
         assertFalse(repo.getNotificationByKey(key)!!.isDismissed)
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun `gif reply store preserves animated bytes, wraps with file provider, and prunes cache`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val gifBytes = byteArrayOf(
+            71, 73, 70, 56, 57, 97, 1, 0, 1, 0, -128, 0, 0, 0, 0, 0, -1, -1, -1,
+            33, -1, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0,
+            33, -7, 4, 0, 10, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0,
+            33, -7, 4, 0, 10, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 76, 1, 0, 59
+        )
+        val source = File.createTempFile("ime_keyboard_gif", ".gif", context.cacheDir)
+        try {
+            source.writeBytes(gifBytes)
+            val cached = GifReplyStore.cacheGifFromUri(context, Uri.fromFile(source))
+            assertNotNull(cached)
+            val cachedFile = File(cached!!.filePath)
+            assertTrue(cachedFile.exists())
+            assertArrayEquals(gifBytes, cachedFile.readBytes())
+            assertEquals("content", cached.shareUri.scheme)
+            assertEquals(GifReplyStore.fileProviderAuthority(context), cached.shareUri.authority)
+
+            // Verify pruning keeps at most maxFiles
+            val dir = File(context.cacheDir, GifReplyStore.DIRECTORY)
+            repeat(5) { idx ->
+                val f = File(dir, "old_$idx.gif").apply {
+                    writeBytes(gifBytes)
+                    setLastModified(1_000L + idx * 100L)
+                }
+                assertTrue(f.exists())
+            }
+            GifReplyStore.pruneOldGifs(context, maxFiles = 2, preserveFile = cachedFile)
+            val remaining = dir.listFiles()?.filter { it.isFile }.orEmpty()
+            assertEquals(2, remaining.size)
+            assertTrue(remaining.any { it.absolutePath == cachedFile.absolutePath })
+        } finally {
+            source.delete()
+        }
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun `messages and x gif replies share directly to target package with caption and persist reply history`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val pm = shadowOf(context.packageManager)
+        val messagesShareComponent = ComponentName(SupportedApp.MESSAGES.packageName, "ShareActivity")
+        val twitterShareComponent = ComponentName(SupportedApp.TWITTER.packageName, "ComposerActivity")
+        val gifShareFilter = IntentFilter(Intent.ACTION_SEND).apply {
+            addCategory(Intent.CATEGORY_DEFAULT)
+            addDataType("image/gif")
+        }
+        pm.addActivityIfNotPresent(messagesShareComponent)
+        pm.addIntentFilterForActivity(messagesShareComponent, gifShareFilter)
+        pm.addActivityIfNotPresent(twitterShareComponent)
+        pm.addIntentFilterForActivity(twitterShareComponent, gifShareFilter)
+
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val gifBytes = byteArrayOf(71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0, 59)
+        val source = File.createTempFile("reply_gif", ".gif", context.cacheDir)
+        try {
+            source.writeBytes(gifBytes)
+            val staged = repo.stageGifAttachment(Uri.fromFile(source))
+            assertNotNull(staged)
+
+            // 1. Google Messages direct share
+            ingest(
+                repo = repo,
+                key = "msg_gif_direct",
+                app = SupportedApp.MESSAGES,
+                title = "Jordan",
+                body = "Did you see that goal?",
+                postTime = System.currentTimeMillis(),
+                canReply = true
+            )
+            val msgResult = repo.sendReplyWithResult(
+                key = "msg_gif_direct",
+                replyText = "Unbelievable!",
+                gifAttachment = staged
+            )
+            assertTrue(msgResult.success)
+            assertEquals(GifDeliveryMode.DIRECT_SHARE, msgResult.deliveryMode)
+            assertFalse(msgResult.usedChooserFallback)
+
+            val msgIntent = shadowOf(context).nextStartedActivity
+            assertEquals(Intent.ACTION_SEND, msgIntent.action)
+            assertEquals(PulseRepository.GIF_MIME_TYPE, msgIntent.type)
+            assertEquals(SupportedApp.MESSAGES.packageName, msgIntent.`package`)
+            assertEquals(staged!!.shareUri, msgIntent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
+            assertEquals("Unbelievable!", msgIntent.getStringExtra(Intent.EXTRA_TEXT))
+            assertTrue(msgIntent.flags and Intent.FLAG_GRANT_READ_URI_PERMISSION != 0)
+            assertEquals(staged.shareUri, msgIntent.clipData?.getItemAt(0)?.uri)
+
+            val savedMsg = repo.getNotificationByKey("msg_gif_direct")!!
+            assertTrue(savedMsg.isDismissed)
+            val savedReplies = PulseJsonCodec.decodeReplies(savedMsg.repliesJson)
+            assertEquals(1, savedReplies.size)
+            assertEquals("Unbelievable!", savedReplies.first().text)
+            assertEquals(staged.filePath, savedReplies.first().gifPath)
+
+            // 2. X (Twitter) mention without RemoteInput (canReply = false) still shares GIF directly to X
+            ingest(
+                repo = repo,
+                key = "x_gif_direct",
+                app = SupportedApp.TWITTER,
+                title = "@alex mentioned you",
+                body = "What do you think?",
+                postTime = System.currentTimeMillis() + 1,
+                canReply = false
+            )
+            val xResult = repo.sendReplyWithResult(
+                key = "x_gif_direct",
+                replyText = "",
+                gifAttachment = staged
+            )
+            assertTrue(xResult.success)
+            assertEquals(GifDeliveryMode.DIRECT_SHARE, xResult.deliveryMode)
+            assertFalse(xResult.usedChooserFallback)
+
+            val xIntent = shadowOf(context).nextStartedActivity
+            assertEquals(Intent.ACTION_SEND, xIntent.action)
+            assertEquals(SupportedApp.TWITTER.packageName, xIntent.`package`)
+            assertEquals(staged.shareUri, xIntent.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
+            assertEquals(null, xIntent.getStringExtra(Intent.EXTRA_TEXT))
+            assertTrue(repo.getNotificationByKey("x_gif_direct")!!.isDismissed)
+        } finally {
+            source.delete()
+        }
+    }
+
+    @Test
+    @Config(sdk = [36])
+    fun `gif direct share falls back to system chooser when target package cannot resolve send intent`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val gifBytes = byteArrayOf(71, 73, 70, 56, 57, 97, 1, 0, 1, 0, 0, 0, 0, 59)
+        val source = File.createTempFile("chooser_gif", ".gif", context.cacheDir)
+        try {
+            source.writeBytes(gifBytes)
+            val staged = repo.stageGifAttachment(Uri.fromFile(source))!!
+
+            ingest(
+                repo = repo,
+                key = "x_chooser_fallback",
+                app = SupportedApp.TWITTER,
+                title = "@sam",
+                body = "Reply with a GIF",
+                postTime = System.currentTimeMillis(),
+                canReply = true
+            )
+            val result = repo.sendReplyWithResult(
+                key = "x_chooser_fallback",
+                replyText = "Here you go",
+                gifAttachment = staged
+            )
+            assertTrue(result.success)
+            assertEquals(GifDeliveryMode.DIRECT_SHARE, result.deliveryMode)
+            assertTrue(result.usedChooserFallback)
+
+            val chooserIntent = shadowOf(context).nextStartedActivity
+            assertEquals(Intent.ACTION_CHOOSER, chooserIntent.action)
+            val wrapped = chooserIntent.getParcelableExtra(Intent.EXTRA_INTENT, Intent::class.java)
+            assertNotNull(wrapped)
+            assertEquals(Intent.ACTION_SEND, wrapped!!.action)
+            assertEquals(PulseRepository.GIF_MIME_TYPE, wrapped.type)
+            assertEquals(null, wrapped.`package`)
+            assertEquals(staged.shareUri, wrapped.getParcelableExtra(Intent.EXTRA_STREAM, Uri::class.java))
+            assertEquals("Here you go", wrapped.getStringExtra(Intent.EXTRA_TEXT))
+        } finally {
+            source.delete()
+        }
     }
 
     @Test
@@ -872,5 +1051,263 @@ class ExampleRobolectricTest {
         assertTrue(active["msg_2"]!!.isRead)
         assertFalse(active["gmail_1"]!!.isRead)
     }
+
+    @Test
+    fun `self-cancel removal callback does not falsely dismiss newly captured alert`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        repo.clearCaptureDiagnostics()
+
+        val app = SupportedApp.MESSAGES
+        repo.sessionPreferences.setAppOptedIn(app.packageName, true)
+        repo.sessionPreferences.setAppShadeMode(app.packageName, ShadeMode.SILENT)
+        val serviceController = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val service = serviceController.get()
+        try {
+            val postTime = System.currentTimeMillis() + 10
+            val notification = Notification.Builder(context, "test")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Taylor")
+                .setContentText("Are we still on for lunch?")
+                .build()
+            val sbn = StatusBarNotification(
+                app.packageName,
+                app.packageName,
+                901,
+                null,
+                Process.myUid(),
+                Process.myPid(),
+                0,
+                notification,
+                Process.myUserHandle(),
+                postTime
+            )
+
+            service.processPostedNotification(repo, sbn, isCatchUp = false, activeSnapshot = listOf(sbn))
+            assertFalse(repo.getNotificationByKey(sbn.key)!!.isDismissed)
+
+            // Simulate an immediate removal callback triggered by Nepho's own cancelNotification()
+            service.onNotificationRemoved(sbn, null, NotificationListenerService.REASON_APP_CANCEL)
+            withTimeout(5_000) {
+                repo.captureDiagnosticsFlow.first { logs ->
+                    logs.any { it.outcome == CaptureOutcome.SELF_CANCEL_IGNORED.name }
+                }
+            }
+            // Message must remain active in Nepho
+            assertFalse(repo.getNotificationByKey(sbn.key)!!.isDismissed)
+
+            // A subsequent genuine removal outside Nepho (not matching a pending self-cancel) still syncs
+            service.onNotificationRemoved(sbn, null, NotificationListenerService.REASON_CLICK)
+            withTimeout(5_000) {
+                repo.captureDiagnosticsFlow.first { logs ->
+                    logs.any { it.outcome == CaptureOutcome.SYNCED_REMOVAL.name }
+                }
+            }
+            assertTrue(repo.getNotificationByKey(sbn.key)!!.isDismissed)
+        } finally {
+            serviceController.destroy()
+        }
+    }
+
+    @Test
+    fun `stale system removal timestamp never dismisses a newer update on the same key`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val t1 = System.currentTimeMillis()
+        val t2 = t1 + 5_000L
+        ingest(repo, "thread_race_key", SupportedApp.MESSAGES, "Chris", "Message 1", t1)
+        ingest(repo, "thread_race_key", SupportedApp.MESSAGES, "Chris", "Message 2", t2)
+
+        assertFalse(repo.syncDismissalFromSystem("thread_race_key", removedPostTime = t1))
+        assertFalse(repo.getNotificationByKey("thread_race_key")!!.isDismissed)
+
+        assertTrue(repo.syncDismissalFromSystem("thread_race_key", removedPostTime = t2))
+        assertTrue(repo.getNotificationByKey("thread_race_key")!!.isDismissed)
+    }
+
+    @Test
+    fun `messaging style, inbox style, and standalone group summary notifications are extracted cleanly`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        // 1. MessagingStyle extraction
+        val msgNotif = Notification.Builder(context, "test")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setStyle(
+                Notification.MessagingStyle("Me")
+                    .setConversationTitle("Family Chat")
+                    .addMessage(Notification.MessagingStyle.Message("Picking up pizza", 1, "Mom"))
+                    .addMessage(Notification.MessagingStyle.Message("Be there in 10!", 2, "Dad"))
+            )
+            .build()
+        val extractedMsg = NephoNotificationListener.extractNotificationContent(msgNotif, "Messages")
+        assertEquals("Family Chat", extractedMsg.title)
+        assertTrue(extractedMsg.body.contains("Mom: Picking up pizza"))
+        assertTrue(extractedMsg.body.contains("Dad: Be there in 10!"))
+
+        // 2. InboxStyle standalone group summary (no child sibling) is captured, while summary WITH child is skipped
+        val summaryNotif = Notification.Builder(context, "test")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setGroup("mail_group")
+            .setGroupSummary(true)
+            .setContentTitle("2 new emails")
+            .setStyle(
+                Notification.InboxStyle()
+                    .addLine("Alice: Q4 Budget")
+                    .addLine("Bob: Lunch today?")
+            )
+            .build()
+        val childNotif = Notification.Builder(context, "test")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setGroup("mail_group")
+            .setContentTitle("Alice")
+            .setContentText("Q4 Budget")
+            .build()
+
+        val now = System.currentTimeMillis() + 10
+        val summarySbn = StatusBarNotification(
+            SupportedApp.GMAIL.packageName, SupportedApp.GMAIL.packageName, 910, null,
+            Process.myUid(), Process.myPid(), 0, summaryNotif, Process.myUserHandle(), now
+        )
+        val childSbn = StatusBarNotification(
+            SupportedApp.GMAIL.packageName, SupportedApp.GMAIL.packageName, 911, null,
+            Process.myUid(), Process.myPid(), 0, childNotif, Process.myUserHandle(), now + 1
+        )
+        repo.sessionPreferences.setAppOptedIn(SupportedApp.GMAIL.packageName, true)
+        repo.sessionPreferences.setAppShadeMode(SupportedApp.GMAIL.packageName, ShadeMode.SILENT)
+
+        val serviceController = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val service = serviceController.get()
+        try {
+            // With child present -> skip summary wrapper
+            service.processPostedNotification(repo, summarySbn, isCatchUp = false, activeSnapshot = listOf(summarySbn, childSbn))
+            assertEquals(null, repo.getNotificationByKey(summarySbn.key))
+
+            // Standalone summary (no child present) -> capture with InboxStyle lines
+            service.processPostedNotification(repo, summarySbn, isCatchUp = false, activeSnapshot = listOf(summarySbn))
+            val savedSummary = repo.getNotificationByKey(summarySbn.key)
+            assertNotNull(savedSummary)
+            assertTrue(savedSummary!!.body.contains("Alice: Q4 Budget"))
+            assertTrue(savedSummary.body.contains("Bob: Lunch today?"))
+        } finally {
+            serviceController.destroy()
+        }
+    }
+
+    @Test
+    fun `thread update on existing key preserves star reminder and replies while resurfacing alert`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        val reminderAt = now + 60 * 60 * 1000L
+        ingest(repo, "preserve_state_key", SupportedApp.OUTLOOK, "Finance", "Draft attached", now, canReply = true)
+        repo.toggleNotificationStar("preserve_state_key")
+        repo.scheduleReminder("preserve_state_key", reminderAt, "Review numbers")
+
+        try {
+            // 1. Update while active preserves star + reminder
+            ingest(repo, "preserve_state_key", SupportedApp.OUTLOOK, "Finance", "Updated draft attached", now + 1_000L, canReply = true)
+            val activeUpdate = repo.getNotificationByKey("preserve_state_key")!!
+            assertFalse(activeUpdate.isDismissed)
+            assertTrue(activeUpdate.isStarred)
+            assertEquals(reminderAt, activeUpdate.reminderAt)
+            assertEquals("Review numbers", activeUpdate.reminderNote)
+
+            // 2. Reply dismisses alert; subsequent message resurfaces it while preserving star and reply history
+            repo.sendInlineReply("preserve_state_key", "Got it, checking soon")
+            assertTrue(repo.getNotificationByKey("preserve_state_key")!!.isDismissed)
+
+            ingest(repo, "preserve_state_key", SupportedApp.OUTLOOK, "Finance", "Final spreadsheet attached", now + 2_000L, canReply = true)
+            val resurfaced = repo.getNotificationByKey("preserve_state_key")!!
+            assertFalse(resurfaced.isDismissed)
+            assertFalse(resurfaced.isRead)
+            assertTrue(resurfaced.isStarred)
+            assertTrue(resurfaced.repliesJson.contains("Got it, checking soon"))
+            assertEquals("Final spreadsheet attached", resurfaced.body)
+        } finally {
+            repo.toggleNotificationStar("preserve_state_key")
+            repo.resetSession()
+        }
+    }
+
+    @Test
+    fun `reconnect catch-up recovers post-session alerts and skips pre-session alerts`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        val sessionStart = repo.resetSession()
+        repo.clearCaptureDiagnostics()
+
+        val app = SupportedApp.GROUPME
+        repo.sessionPreferences.setAppOptedIn(app.packageName, true)
+        repo.sessionPreferences.setAppShadeMode(app.packageName, ShadeMode.SILENT)
+
+        val preSbn = StatusBarNotification(
+            app.packageName, app.packageName, 920, null, Process.myUid(), Process.myPid(), 0,
+            Notification.Builder(context, "test")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Old Group")
+                .setContentText("Before session")
+                .build(),
+            Process.myUserHandle(),
+            sessionStart - 10_000L
+        )
+        val postSbn = StatusBarNotification(
+            app.packageName, app.packageName, 921, null, Process.myUid(), Process.myPid(), 0,
+            Notification.Builder(context, "test")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Soccer Parents")
+                .setContentText("Field changed to #4")
+                .build(),
+            Process.myUserHandle(),
+            sessionStart + 5_000L
+        )
+
+        val serviceController = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val service = serviceController.get()
+        try {
+            service.catchUpActiveNotifications(repo, listOf(preSbn, postSbn))
+            assertEquals(null, repo.getNotificationByKey(preSbn.key))
+            val recovered = repo.getNotificationByKey(postSbn.key)
+            assertNotNull(recovered)
+            assertEquals("LISTENER_CATCHUP", recovered!!.sourceChannel)
+            val logs = repo.captureDiagnosticsFlow.first()
+            assertTrue(logs.any { it.outcome == CaptureOutcome.CAPTURED_CATCHUP.name && it.titlePreview == "Soccer Parents" })
+        } finally {
+            serviceController.destroy()
+        }
+    }
+
+    @Test
+    fun `capture diagnostics enforces 100-row cap and clears cleanly`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.clearCaptureDiagnostics()
+
+        val baseTime = System.currentTimeMillis()
+        for (i in 1..115) {
+            repo.recordCaptureDiagnostic(
+                packageName = SupportedApp.MESSAGES.packageName,
+                appLabel = "Messages",
+                titlePreview = "Event #$i",
+                outcome = CaptureOutcome.CAPTURED,
+                detail = "Captured item $i",
+                timestamp = baseTime + i
+            )
+        }
+
+        val logs = repo.captureDiagnosticsFlow.first()
+        assertEquals(PulseRepository.MAX_DIAGNOSTIC_ROWS, logs.size)
+        assertEquals("Event #115", logs.first().titlePreview)
+
+        repo.clearCaptureDiagnostics()
+        assertTrue(repo.captureDiagnosticsFlow.first().isEmpty())
+    }
 }
+
 

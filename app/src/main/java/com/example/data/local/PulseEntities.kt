@@ -90,3 +90,18 @@ data class DigestSummaryEntity(
     val summary: String,
     val urlsJson: String
 )
+
+@Entity(
+    tableName = "capture_diagnostics",
+    indices = [Index(value = ["timestamp"])]
+)
+data class CaptureDiagnosticEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val timestamp: Long,
+    val packageName: String,
+    val appLabel: String,
+    val titlePreview: String,
+    val outcome: String,
+    val detail: String
+)
+

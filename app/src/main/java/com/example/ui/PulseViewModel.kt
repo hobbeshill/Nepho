@@ -2,13 +2,17 @@ package com.example.ui
 
 import android.app.Application
 import android.content.ActivityNotFoundException
+import android.content.Context
 import android.content.Intent
 import android.net.Uri
+import android.os.PowerManager
+import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.example.R
 import com.example.data.AppShadePreference
+import com.example.data.CachedGifAttachment
 import com.example.data.ExtractedLinkItem
 import com.example.data.PulseNotificationItem
 import com.example.data.PulseRepository
@@ -16,12 +20,14 @@ import com.example.data.SessionMetrics
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
+import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.PulseDatabase
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
 import com.example.worker.DigestSchedule
 import com.example.worker.DigestWorker
 import com.example.worker.RetentionPurgeWorker
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -34,6 +40,7 @@ import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withContext
 import java.util.UUID
 
 enum class PulseTab {
@@ -45,6 +52,14 @@ data class SnackbarEvent(
     val message: String,
     val actionLabel: String? = null,
     val onAction: (() -> Unit)? = null
+)
+
+data class ListenerHealthState(
+    val isAccessGranted: Boolean = false,
+    val isListenerConnected: Boolean = false,
+    val lastConnectedAt: Long? = null,
+    val hasPostNotificationPermission: Boolean = true,
+    val isIgnoringBatteryOptimizations: Boolean = true
 )
 
 class PulseViewModel(application: Application) : AndroidViewModel(application) {
@@ -89,6 +104,40 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         NephoNotificationListener.isListenerEnabled(application)
     )
     val isNotificationAccessGranted: StateFlow<Boolean> = _isNotificationAccessGranted.asStateFlow()
+
+    private val _isIgnoringBatteryOptimizations = MutableStateFlow(
+        checkIgnoringBatteryOptimizations(application)
+    )
+
+    val listenerHealth: StateFlow<ListenerHealthState> = combine(
+        _isNotificationAccessGranted,
+        NephoNotificationListener.listenerConnectedFlow,
+        NephoNotificationListener.lastConnectedAtFlow,
+        _hasNotificationPermission,
+        _isIgnoringBatteryOptimizations
+    ) { accessGranted, connected, lastConnectedAt, notifPerm, ignoringBattery ->
+        ListenerHealthState(
+            isAccessGranted = accessGranted,
+            isListenerConnected = connected,
+            lastConnectedAt = lastConnectedAt,
+            hasPostNotificationPermission = notifPerm,
+            isIgnoringBatteryOptimizations = ignoringBattery
+        )
+    }.stateIn(
+        viewModelScope,
+        SharingStarted.WhileSubscribed(5_000),
+        ListenerHealthState(
+            isAccessGranted = _isNotificationAccessGranted.value,
+            isListenerConnected = NephoNotificationListener.listenerConnectedFlow.value,
+            lastConnectedAt = NephoNotificationListener.lastConnectedAtFlow.value,
+            hasPostNotificationPermission = _hasNotificationPermission.value,
+            isIgnoringBatteryOptimizations = _isIgnoringBatteryOptimizations.value
+        )
+    )
+
+    val captureDiagnostics: StateFlow<List<CaptureDiagnosticEntity>> =
+        repository.captureDiagnosticsFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     private val _snackbarEvents = MutableSharedFlow<SnackbarEvent>(extraBufferCapacity = 8)
     val snackbarEvents: SharedFlow<SnackbarEvent> = _snackbarEvents.asSharedFlow()
@@ -332,6 +381,57 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         val ctx = getApplication<Application>()
         _hasNotificationPermission.value = LocalPulseNotifier.hasNotificationPermission(ctx)
         _isNotificationAccessGranted.value = NephoNotificationListener.isListenerEnabled(ctx)
+        _isIgnoringBatteryOptimizations.value = checkIgnoringBatteryOptimizations(ctx)
+    }
+
+    fun requestListenerRebind() {
+        val ctx = getApplication<Application>()
+        val requested = NephoNotificationListener.requestRebindService(ctx)
+        refreshAccessAndPermissions()
+        emitSnackbar(
+            ctx.getString(
+                if (requested) R.string.diagnostics_rebind_sent else R.string.diagnostics_rebind_failed
+            )
+        )
+    }
+
+    fun openBatteryOptimizationSettings() {
+        val ctx = getApplication<Application>()
+        val primaryIntent = Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        val fallbackIntent = Intent(
+            Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            Uri.fromParts("package", ctx.packageName, null)
+        ).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            ctx.startActivity(primaryIntent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Primary battery settings unavailable, falling back to app details", e)
+            try {
+                ctx.startActivity(fallbackIntent)
+            } catch (fallbackError: Exception) {
+                Log.w(TAG, "App details settings unavailable", fallbackError)
+                emitSnackbar(ctx.getString(R.string.diagnostics_battery_settings_unavailable))
+            }
+        }
+    }
+
+    fun clearCaptureDiagnostics() {
+        viewModelScope.launch {
+            repository.clearCaptureDiagnostics()
+            emitSnackbar(getApplication<Application>().getString(R.string.diagnostics_cleared))
+        }
+    }
+
+    private fun checkIgnoringBatteryOptimizations(context: Context): Boolean {
+        val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
+            ?: return true
+        return runCatching {
+            powerManager.isIgnoringBatteryOptimizations(context.packageName)
+        }.getOrDefault(true)
     }
 
     fun refreshNotificationPermission() {
@@ -470,11 +570,39 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     fun canSendGifReply(key: String): Boolean =
         repository.canSendGifReply(key)
 
-    fun sendInlineReply(key: String, replyText: String, gifUri: Uri? = null) {
+    fun shouldDirectShareGif(key: String, packageName: String): Boolean =
+        repository.shouldDirectShareGif(key, packageName)
+
+    suspend fun stageGifAttachment(sourceUri: Uri): CachedGifAttachment? =
+        withContext(Dispatchers.IO) {
+            repository.stageGifAttachment(sourceUri)
+        }
+
+    fun notifyGifLoadFailed() {
+        emitSnackbar(getApplication<Application>().getString(R.string.gif_cache_failed))
+    }
+
+    fun sendInlineReply(
+        key: String,
+        replyText: String,
+        gifUri: Uri? = null,
+        cachedGif: CachedGifAttachment? = null
+    ) {
         viewModelScope.launch {
-            val sent = repository.sendInlineReply(key, replyText, gifUri)
-            if (gifUri != null && !sent) {
-                emitSnackbar("Couldn't send the GIF. Try opening the conversation in its app.")
+            val result = withContext(Dispatchers.IO) {
+                repository.sendReplyWithResult(
+                    key = key,
+                    replyText = replyText,
+                    gifAttachment = cachedGif,
+                    gifUri = gifUri
+                )
+            }
+            if (gifUri != null || cachedGif != null) {
+                val ctx = getApplication<Application>()
+                when {
+                    !result.success -> emitSnackbar(ctx.getString(R.string.gif_send_failed))
+                    result.usedChooserFallback -> emitSnackbar(ctx.getString(R.string.gif_share_chooser_hint))
+                }
             }
         }
     }

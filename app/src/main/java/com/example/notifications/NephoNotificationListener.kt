@@ -2,11 +2,16 @@ package com.example.notifications
 
 import android.app.Notification
 import android.app.PendingIntent
+import android.app.Person
+import android.content.ComponentName
 import android.content.Context
 import android.os.Build
+import android.os.Bundle
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
+import com.example.data.CaptureOutcome
 import com.example.data.NativeReplyHandle
 import com.example.data.NotificationImageStore
 import com.example.data.PulseRepository
@@ -14,20 +19,53 @@ import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
 import java.lang.ref.WeakReference
 import java.util.Locale
+import java.util.concurrent.ConcurrentHashMap
+
+internal data class ExtractedNotificationContent(
+    val title: String,
+    val body: String,
+    val hasDirectBodyText: Boolean,
+    val hasMedia: Boolean
+)
 
 class NephoNotificationListener : NotificationListenerService() {
 
-    private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
+    @OptIn(ExperimentalCoroutinesApi::class)
+    private val serializedDispatcher = Dispatchers.IO.limitedParallelism(1)
+    private val serviceScope = CoroutineScope(SupervisorJob() + serializedDispatcher)
+    private val selfCanceledPostTimes = ConcurrentHashMap<String, Long>()
 
     override fun onListenerConnected() {
         super.onListenerConnected()
         activeInstance = WeakReference(this)
-        // Strict session start policy: do NOT backfill pre-session notifications on connect.
+        val connectedAt = System.currentTimeMillis()
+        _listenerConnected.value = true
+        _lastConnectedAt.value = connectedAt
+
+        val repository = PulseRepository.getInstance(applicationContext)
+        val currentActive = runCatching { activeNotifications?.toList().orEmpty() }
+            .getOrDefault(emptyList())
+
+        serviceScope.launch {
+            repository.recordCaptureDiagnostic(
+                packageName = applicationContext.packageName,
+                appLabel = "Nepho",
+                titlePreview = "Listener connected",
+                outcome = CaptureOutcome.LISTENER_CONNECTED,
+                detail = "Active shade sweep checking ${currentActive.size} notification(s) posted since session start.",
+                timestamp = connectedAt
+            )
+            catchUpActiveNotifications(repository, currentActive)
+        }
     }
 
     override fun onListenerDisconnected() {
@@ -35,37 +73,211 @@ class NephoNotificationListener : NotificationListenerService() {
         if (activeInstance?.get() === this) {
             activeInstance = null
         }
+        _listenerConnected.value = false
+        val repository = PulseRepository.getInstance(applicationContext)
+        serviceScope.launch {
+            repository.recordCaptureDiagnostic(
+                packageName = applicationContext.packageName,
+                appLabel = "Nepho",
+                titlePreview = "Listener disconnected",
+                outcome = CaptureOutcome.LISTENER_DISCONNECTED,
+                detail = "Android unbound the notification listener. Nepho will catch up post-session alerts on reconnect."
+            )
+        }
     }
 
     override fun onNotificationPosted(sbn: StatusBarNotification?) {
         if (sbn == null) return
-        val appPkg = applicationContext.packageName
-        if (sbn.packageName == appPkg) return
+        if (sbn.packageName == applicationContext.packageName) return
+        val activeSnapshot = runCatching { activeNotifications?.toList() }.getOrNull()
+        val repository = PulseRepository.getInstance(applicationContext)
+        serviceScope.launch {
+            processPostedNotification(
+                repository = repository,
+                sbn = sbn,
+                isCatchUp = false,
+                activeSnapshot = activeSnapshot
+            )
+        }
+    }
 
+    override fun onNotificationRemoved(
+        sbn: StatusBarNotification?,
+        rankingMap: RankingMap?,
+        reason: Int
+    ) {
+        super.onNotificationRemoved(sbn, rankingMap, reason)
+        if (sbn == null) return
+        if (sbn.packageName == applicationContext.packageName) return
+
+        val repository = PulseRepository.getInstance(applicationContext)
+        serviceScope.launch {
+            // Skip non-syncable removals (e.g. REASON_LISTENER_CANCEL, system housekeeping)
+            if (reason !in SYNCABLE_REMOVAL_REASONS) {
+                selfCanceledPostTimes.remove(sbn.key, sbn.postTime)
+                return@launch
+            }
+
+            // Guard against race conditions where Android or the source app fires a syncable
+            // removal callback immediately after Nepho itself suppressed this exact postTime.
+            if (selfCanceledPostTimes.remove(sbn.key, sbn.postTime)) {
+                val appLabel = resolveAppLabel(sbn.packageName)
+                val titlePreview = sbn.notification?.extras
+                    ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+                    .orEmpty()
+                    .ifEmpty { appLabel }
+                repository.recordCaptureDiagnostic(
+                    packageName = sbn.packageName,
+                    appLabel = appLabel,
+                    titlePreview = titlePreview,
+                    outcome = CaptureOutcome.SELF_CANCEL_IGNORED,
+                    detail = "Ignored removal callback (${removalReasonLabel(reason)}) matching Nepho's own shade suppression."
+                )
+                return@launch
+            }
+
+            val synced = repository.syncDismissalFromSystem(
+                key = sbn.key,
+                removedPostTime = sbn.postTime
+            )
+            if (synced) {
+                val appLabel = resolveAppLabel(sbn.packageName)
+                val titlePreview = sbn.notification?.extras
+                    ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+                    .orEmpty()
+                    .ifEmpty { appLabel }
+                repository.recordCaptureDiagnostic(
+                    packageName = sbn.packageName,
+                    appLabel = appLabel,
+                    titlePreview = titlePreview,
+                    outcome = CaptureOutcome.SYNCED_REMOVAL,
+                    detail = "Dismissed in Nepho to match removal outside Nepho (${removalReasonLabel(reason)})."
+                )
+            }
+        }
+    }
+
+    override fun onDestroy() {
+        super.onDestroy()
+        if (activeInstance?.get() === this) {
+            activeInstance = null
+        }
+        _listenerConnected.value = false
+        selfCanceledPostTimes.clear()
+        serviceScope.cancel()
+    }
+
+    internal suspend fun catchUpActiveNotifications(
+        repository: PulseRepository,
+        activeList: List<StatusBarNotification>
+    ) {
+        val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
+        val appPkg = applicationContext.packageName
+        for (sbn in activeList.sortedBy { it.postTime }) {
+            if (sbn.packageName == appPkg) continue
+            if (sbn.postTime < sessionOpenedAt) continue
+            val existing = repository.getNotificationByKey(sbn.key)
+            if (existing != null && existing.postTime >= sbn.postTime) continue
+            processPostedNotification(
+                repository = repository,
+                sbn = sbn,
+                isCatchUp = true,
+                activeSnapshot = activeList
+            )
+        }
+    }
+
+    internal suspend fun processPostedNotification(
+        repository: PulseRepository,
+        sbn: StatusBarNotification,
+        isCatchUp: Boolean,
+        activeSnapshot: List<StatusBarNotification>?
+    ) {
         val notification = sbn.notification ?: return
         // Ignore ongoing/persistent system notifications (foreground services, media players, charging)
         if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
-        // Ignore group summary wrapper rows so individual messages aren't duplicated
-        if ((notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0) return
-
-        val repository = PulseRepository.getInstance(applicationContext)
-        val extras = notification.extras
-        val rawTitle = extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim().orEmpty()
-        val bigText = extras?.getCharSequence(Notification.EXTRA_BIG_TEXT)?.toString()?.trim()
-        val normalText = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
-        val body = bigText?.takeIf { it.isNotEmpty() } ?: normalText.orEmpty()
-
-        val hasMedia = extras?.let {
-            it.containsKey(Notification.EXTRA_MESSAGES) ||
-                it.containsKey(Notification.EXTRA_PICTURE) ||
-                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
-                    it.containsKey(Notification.EXTRA_PICTURE_ICON))
-        } == true
-        if (rawTitle.isEmpty() && body.isEmpty() && !hasMedia) return
 
         val appLabel = resolveAppLabel(sbn.packageName)
-        val finalTitle = rawTitle.ifEmpty { appLabel }
-        val finalBody = body.ifEmpty { finalTitle }
+        val extracted = extractNotificationContent(notification, appLabel)
+
+        val isGroupSummary = (notification.flags and Notification.FLAG_GROUP_SUMMARY) != 0
+        if (isGroupSummary) {
+            val hasSiblingChildren = activeSnapshot?.any { other ->
+                other.key != sbn.key &&
+                    other.packageName == sbn.packageName &&
+                    (other.notification.flags and Notification.FLAG_GROUP_SUMMARY) == 0 &&
+                    (notification.group == null || other.notification.group == notification.group)
+            } == true
+            if (hasSiblingChildren || !extracted.hasDirectBodyText) {
+                repository.recordCaptureDiagnostic(
+                    packageName = sbn.packageName,
+                    appLabel = appLabel,
+                    titlePreview = extracted.title,
+                    outcome = CaptureOutcome.SKIPPED_GROUP_SUMMARY,
+                    detail = if (hasSiblingChildren) {
+                        "Skipped redundant group summary wrapper because child message notifications exist."
+                    } else {
+                        "Skipped group summary without direct message content."
+                    }
+                )
+                return
+            }
+        }
+
+        if (extracted.title.isEmpty() && extracted.body.isEmpty() && !extracted.hasMedia) return
+
+        val finalTitle = extracted.title.ifEmpty { appLabel }
+        val finalBody = extracted.body.ifEmpty {
+            if (extracted.hasMedia) "Media attachment" else finalTitle
+        }
+
+        val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
+        if (sbn.postTime < sessionOpenedAt) {
+            if (!isCatchUp) {
+                repository.recordCaptureDiagnostic(
+                    packageName = sbn.packageName,
+                    appLabel = appLabel,
+                    titlePreview = finalTitle,
+                    outcome = CaptureOutcome.SKIPPED_PRE_SESSION,
+                    detail = "Skipped alert posted before the active session start time."
+                )
+            }
+            return
+        }
+
+        repository.sessionPreferences.recordObservedApp(sbn.packageName, appLabel)
+
+        // Leave opted-out apps completely untouched so their original notifications remain in the shade
+        if (!repository.isAppOptedIn(sbn.packageName)) {
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = finalTitle,
+                outcome = CaptureOutcome.SKIPPED_OPTED_OUT,
+                detail = "App is opted out of Nepho interception; left original notification in shade."
+            )
+            return
+        }
+
+        val shadeMode = repository.sessionPreferences.getEffectiveShadeMode(sbn.packageName)
+
+        // Blocked apps: cancel the original notification and capture nothing
+        if (shadeMode == ShadeMode.BLOCKED) {
+            selfCanceledPostTimes[sbn.key] = sbn.postTime
+            try {
+                cancelNotification(sbn.key)
+            } catch (_: Exception) {
+                // Listener may have disconnected concurrently
+            }
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = finalTitle,
+                outcome = CaptureOutcome.SKIPPED_BLOCKED,
+                detail = "App is set to Blocked; suppressed original notification without capturing."
+            )
+            return
+        }
 
         // Extract RemoteInput reply handle and secondary action intents BEFORE canceling the original notification
         val actions = notification.actions ?: emptyArray()
@@ -91,40 +303,21 @@ class NephoNotificationListener : NotificationListenerService() {
         val canReply = replyPendingIntent != null && !replyRemoteInputs.isNullOrEmpty()
         val localNotificationId = (sbn.key.hashCode() and 0x7FFFFFFF).coerceAtLeast(1000)
 
-        serviceScope.launch {
-            val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
-            if (sbn.postTime < sessionOpenedAt) return@launch
-
-            repository.sessionPreferences.recordObservedApp(sbn.packageName, appLabel)
-
-            // Leave opted-out apps completely untouched so their original notifications remain in the shade
-            if (!repository.isAppOptedIn(sbn.packageName)) return@launch
-
-            val shadeMode = repository.sessionPreferences.getEffectiveShadeMode(sbn.packageName)
-
-            // Blocked apps: cancel the original notification and capture nothing
-            if (shadeMode == ShadeMode.BLOCKED) {
-                try {
-                    cancelNotification(sbn.key)
-                } catch (_: Exception) {
-                    // Listener may have disconnected concurrently
-                }
-                return@launch
-            }
-
-            if (canReply || secondaryActionIntents.isNotEmpty()) {
-                repository.registerNativeActionHandle(
-                    key = sbn.key,
-                    handle = NativeReplyHandle(
-                        replyPendingIntent = replyPendingIntent,
-                        frameworkRemoteInputs = replyRemoteInputs,
-                        secondaryActionIntents = secondaryActionIntents,
-                        isSelfBroadcast = false
-                    )
+        if (canReply || secondaryActionIntents.isNotEmpty()) {
+            repository.registerNativeActionHandle(
+                key = sbn.key,
+                handle = NativeReplyHandle(
+                    replyPendingIntent = replyPendingIntent,
+                    frameworkRemoteInputs = replyRemoteInputs,
+                    secondaryActionIntents = secondaryActionIntents,
+                    isSelfBroadcast = false
                 )
-            }
-            repository.registerContentIntent(sbn.key, notification.contentIntent)
+            )
+        }
+        repository.registerContentIntent(sbn.key, notification.contentIntent)
 
+        // Persist first; never suppress the original notification if ingestion fails.
+        val ingestSucceeded = runCatching {
             repository.ingestNotification(
                 key = sbn.key,
                 notificationId = localNotificationId,
@@ -135,60 +328,79 @@ class NephoNotificationListener : NotificationListenerService() {
                 postTime = sbn.postTime,
                 canReply = canReply,
                 secondaryActions = secondaryLabels,
-                sourceChannel = "LISTENER",
+                sourceChannel = if (isCatchUp) "LISTENER_CATCHUP" else "LISTENER",
                 imageUri = NotificationImageStore.capture(applicationContext, sbn.key, notification)
             )
+        }.onFailure { error ->
+            Log.e(TAG, "Failed to persist notification ${sbn.key}", error)
+        }.isSuccess
 
-            // Suppress the original app notification so only Nepho surfaces it
-            try {
-                cancelNotification(sbn.key)
-            } catch (_: Exception) {
-                // Listener may have disconnected concurrently
-            }
-
-            // Route to Nepho shade only if this app is configured for NEPHO_ALERT
-            if (shadeMode == ShadeMode.NEPHO_ALERT) {
-                LocalPulseNotifier.postInteractiveLocalNotification(
-                    context = applicationContext,
-                    repository = repository,
-                    key = sbn.key,
-                    notificationId = localNotificationId,
-                    appLabel = appLabel,
-                    title = finalTitle,
-                    body = finalBody,
-                    canReply = canReply,
-                    secondaryActions = secondaryLabels,
-                    registerLocalFallbackHandle = false
-                )
-            }
+        if (!ingestSucceeded) {
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = finalTitle,
+                outcome = CaptureOutcome.FALLBACK_KEPT_ORIGINAL,
+                detail = "Storage error while saving alert; kept original notification in shade."
+            )
+            return
         }
-    }
 
-    override fun onNotificationRemoved(
-        sbn: StatusBarNotification?,
-        rankingMap: RankingMap?,
-        reason: Int
-    ) {
-        super.onNotificationRemoved(sbn, rankingMap, reason)
-        if (sbn == null) return
-        if (sbn.packageName == applicationContext.packageName) return
-        // Only mirror removals initiated by the user or the source app (e.g. the message
-        // was read, replied to, or cleared inside the real app). Skip our own
-        // cancelNotification() calls and system housekeeping removals.
-        if (reason !in SYNCABLE_REMOVAL_REASONS) return
-
-        val repository = PulseRepository.getInstance(applicationContext)
-        serviceScope.launch {
-            repository.syncDismissalFromSystem(sbn.key)
+        // If configured for Nepho Alert without POST_NOTIFICATIONS permission, keep the
+        // original shade notification so the user isn't left with zero alert.
+        if (shadeMode == ShadeMode.NEPHO_ALERT && !LocalPulseNotifier.hasNotificationPermission(applicationContext)) {
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = finalTitle,
+                outcome = CaptureOutcome.FALLBACK_KEPT_ORIGINAL,
+                detail = "Captured to Feed; kept original shade alert because Nepho shade permission is off."
+            )
+            return
         }
-    }
 
-    override fun onDestroy() {
-        super.onDestroy()
-        if (activeInstance?.get() === this) {
-            activeInstance = null
+        // Suppress the original app notification so only Nepho surfaces it
+        selfCanceledPostTimes[sbn.key] = sbn.postTime
+        try {
+            cancelNotification(sbn.key)
+        } catch (_: Exception) {
+            // Listener may have disconnected concurrently
         }
-        serviceScope.cancel()
+
+        // Route to Nepho shade only if this app is configured for NEPHO_ALERT
+        if (shadeMode == ShadeMode.NEPHO_ALERT) {
+            LocalPulseNotifier.postInteractiveLocalNotification(
+                context = applicationContext,
+                repository = repository,
+                key = sbn.key,
+                notificationId = localNotificationId,
+                appLabel = appLabel,
+                title = finalTitle,
+                body = finalBody,
+                canReply = canReply,
+                secondaryActions = secondaryLabels,
+                registerLocalFallbackHandle = false
+            )
+        }
+
+        val outcome = if (isCatchUp) CaptureOutcome.CAPTURED_CATCHUP else CaptureOutcome.CAPTURED
+        val routeText = when (shadeMode) {
+            ShadeMode.NEPHO_ALERT -> "Feed + Nepho Alert"
+            ShadeMode.SILENT -> "Feed only (Silent)"
+            ShadeMode.BLOCKED -> "Blocked"
+        }
+        val detail = if (isCatchUp) {
+            "Recovered during reconnect catch-up • $routeText"
+        } else {
+            "Captured & original suppressed • $routeText"
+        }
+        repository.recordCaptureDiagnostic(
+            packageName = sbn.packageName,
+            appLabel = appLabel,
+            titlePreview = finalTitle,
+            outcome = outcome,
+            detail = detail
+        )
     }
 
     private fun resolveAppLabel(packageName: String): String {
@@ -213,9 +425,26 @@ class NephoNotificationListener : NotificationListenerService() {
         }
     }
 
+    private fun removalReasonLabel(reason: Int): String = when (reason) {
+        REASON_CLICK -> "opened"
+        REASON_CANCEL -> "swiped away"
+        REASON_CANCEL_ALL -> "cleared all"
+        REASON_APP_CANCEL -> "cleared by app"
+        REASON_APP_CANCEL_ALL -> "cleared all by app"
+        else -> "reason $reason"
+    }
+
     companion object {
+        private const val TAG = "NephoListener"
+
         @Volatile
         private var activeInstance: WeakReference<NephoNotificationListener>? = null
+
+        private val _listenerConnected = MutableStateFlow(false)
+        val listenerConnectedFlow: StateFlow<Boolean> = _listenerConnected.asStateFlow()
+
+        private val _lastConnectedAt = MutableStateFlow<Long?>(null)
+        val lastConnectedAtFlow: StateFlow<Long?> = _lastConnectedAt.asStateFlow()
 
         private val SYNCABLE_REMOVAL_REASONS = setOf(
             REASON_CLICK,
@@ -228,6 +457,15 @@ class NephoNotificationListener : NotificationListenerService() {
         fun isListenerEnabled(context: Context): Boolean {
             return NotificationManagerCompat.getEnabledListenerPackages(context)
                 .contains(context.packageName)
+        }
+
+        fun requestRebindService(context: Context): Boolean {
+            return runCatching {
+                requestRebind(ComponentName(context, NephoNotificationListener::class.java))
+                true
+            }.onFailure { e ->
+                Log.w(TAG, "requestRebind failed", e)
+            }.getOrDefault(false)
         }
 
         fun cancelSystemNotification(key: String) {
@@ -248,6 +486,99 @@ class NephoNotificationListener : NotificationListenerService() {
             } catch (_: Exception) {
                 // Ignore if listener is not actively bound
             }
+        }
+
+        @Suppress("DEPRECATION")
+        internal fun extractNotificationContent(
+            notification: Notification,
+            appLabel: String
+        ): ExtractedNotificationContent {
+            val extras = notification.extras ?: Bundle.EMPTY
+            val conversationTitle = extras.getCharSequence(Notification.EXTRA_CONVERSATION_TITLE)
+                ?.toString()?.trim().orEmpty()
+            val bigTitle = extras.getCharSequence(Notification.EXTRA_TITLE_BIG)
+                ?.toString()?.trim().orEmpty()
+            val normalTitle = extras.getCharSequence(Notification.EXTRA_TITLE)
+                ?.toString()?.trim().orEmpty()
+            val resolvedTitle = conversationTitle.ifEmpty { normalTitle }.ifEmpty { bigTitle }
+
+            // 1. MessagingStyle (Google Messages, WhatsApp, Discord, Slack, GroupMe, etc.)
+            val messagingLines = mutableListOf<String>()
+            var latestMessagingSender = ""
+            var messagingHasMedia = false
+            val rawMessages = extras.getParcelableArray(Notification.EXTRA_MESSAGES)
+            if (!rawMessages.isNullOrEmpty()) {
+                for (entry in rawMessages) {
+                    val bundle = entry as? Bundle ?: continue
+                    val msgText = bundle.getCharSequence("text")?.toString()?.trim().orEmpty()
+                    val senderName = extractSenderName(bundle)
+                    if (bundle.getParcelable<android.net.Uri>("uri") != null) {
+                        messagingHasMedia = true
+                    }
+                    if (msgText.isNotEmpty()) {
+                        if (senderName.isNotEmpty()) {
+                            latestMessagingSender = senderName
+                        }
+                        val formatted = if (
+                            senderName.isNotEmpty() &&
+                            !senderName.equals(resolvedTitle, ignoreCase = true)
+                        ) {
+                            "$senderName: $msgText"
+                        } else {
+                            msgText
+                        }
+                        messagingLines.add(formatted)
+                    }
+                }
+            }
+            val messagingBody = messagingLines.takeLast(3).joinToString("\n").trim()
+
+            // 2. BigTextStyle
+            val bigText = extras.getCharSequence(Notification.EXTRA_BIG_TEXT)
+                ?.toString()?.trim().orEmpty()
+
+            // 3. InboxStyle (Gmail, Outlook, multi-message summaries)
+            val inboxLines = extras.getCharSequenceArray(Notification.EXTRA_TEXT_LINES)
+                ?.mapNotNull { it?.toString()?.trim()?.takeIf { line -> line.isNotEmpty() } }
+                ?.take(5)
+                ?.joinToString("\n")
+                .orEmpty()
+
+            // 4. Standard text & subtext
+            val normalText = extras.getCharSequence(Notification.EXTRA_TEXT)
+                ?.toString()?.trim().orEmpty()
+            val subText = extras.getCharSequence(Notification.EXTRA_SUB_TEXT)
+                ?.toString()?.trim().orEmpty()
+
+            val directBody = when {
+                messagingBody.isNotEmpty() -> messagingBody
+                bigText.isNotEmpty() -> bigText
+                inboxLines.isNotEmpty() -> inboxLines
+                normalText.isNotEmpty() -> normalText
+                else -> ""
+            }
+            val finalTitle = resolvedTitle.ifEmpty { latestMessagingSender }.ifEmpty { appLabel }
+            val hasMedia = messagingHasMedia ||
+                extras.containsKey(Notification.EXTRA_PICTURE) ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    extras.containsKey(Notification.EXTRA_PICTURE_ICON))
+
+            return ExtractedNotificationContent(
+                title = if (resolvedTitle.isNotEmpty() || latestMessagingSender.isNotEmpty()) finalTitle else "",
+                body = directBody.ifEmpty { subText },
+                hasDirectBodyText = directBody.isNotEmpty(),
+                hasMedia = hasMedia
+            )
+        }
+
+        @Suppress("DEPRECATION")
+        private fun extractSenderName(messageBundle: Bundle): String {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
+                val person = messageBundle.getParcelable<Person>("sender_person")
+                val personName = person?.name?.toString()?.trim().orEmpty()
+                if (personName.isNotEmpty()) return personName
+            }
+            return messageBundle.getCharSequence("sender")?.toString()?.trim().orEmpty()
         }
     }
 }
