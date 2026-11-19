@@ -48,8 +48,30 @@ interface PulseDao {
     @Query("UPDATE pulse_notifications SET isRead = 1 WHERE `key` = :key")
     suspend fun markAsRead(key: String)
 
+    @Query("UPDATE pulse_notifications SET isRead = 1 WHERE packageName = :packageName AND isDismissed = 0 AND isRead = 0")
+    suspend fun markPackageAsRead(packageName: String): Int
+
     @Query("UPDATE pulse_notifications SET isDismissed = 1, reminderAt = NULL, reminderNote = NULL WHERE `key` = :key")
     suspend fun dismissByKey(key: String)
+
+    @Query(
+        "UPDATE pulse_notifications " +
+            "SET isDismissed = 0, reminderAt = :reminderAt, reminderNote = :reminderNote " +
+            "WHERE `key` = :key"
+    )
+    suspend fun restoreDismissedByKey(key: String, reminderAt: Long?, reminderNote: String?)
+
+    @Query(
+        "SELECT * FROM pulse_notifications " +
+            "WHERE packageName = :packageName AND isDismissed = 0 AND isStarred = 0 AND postTime >= :cutoffTime"
+    )
+    suspend fun getActiveUnstarredByPackage(packageName: String, cutoffTime: Long): List<PulseNotificationEntity>
+
+    @Query(
+        "SELECT COUNT(*) FROM pulse_notifications " +
+            "WHERE packageName = :packageName AND isDismissed = 0 AND isStarred = 1"
+    )
+    suspend fun countActiveStarredByPackage(packageName: String): Int
 
     @Query("UPDATE pulse_notifications SET isStarred = :starred WHERE `key` = :key")
     suspend fun updateNotificationStar(key: String, starred: Boolean)

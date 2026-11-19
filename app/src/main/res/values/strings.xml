@@ -51,4 +51,11 @@
     <string name="thread_dismiss_all">Dismiss Thread</string>
     <string name="card_thread_hint">Tap to expand thread</string>
     <string name="card_thread_hint_with_replies">Tap to expand thread • %1$d reply(ies) sent</string>
+    <string name="action_undo">Undo</string>
+    <string name="swipe_label_dismiss">Dismiss</string>
+    <string name="swipe_label_protected">Protected</string>
+    <string name="swipe_label_star">Star</string>
+    <string name="swipe_label_unstar">Unstar</string>
+    <string name="action_group_mark_read">Mark %1$s read</string>
+    <string name="action_group_clear">Clear %1$s alerts</string>
 </resources>

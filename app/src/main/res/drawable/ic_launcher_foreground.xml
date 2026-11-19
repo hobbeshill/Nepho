@@ -3,6 +3,6 @@
     <item
         android:width="66dp"
         android:height="66dp"
-        android:drawable="@drawable/pulsehub_icon_1795021210257"
+        android:drawable="@drawable/nepho_logo"
         android:gravity="center" />
 </layer-list>

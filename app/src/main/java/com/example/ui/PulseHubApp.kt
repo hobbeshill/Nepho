@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -44,8 +45,11 @@ import androidx.compose.material3.NavigationRail
 import androidx.compose.material3.NavigationRailItem
 import androidx.compose.material3.NavigationRailItemDefaults
 import androidx.compose.material3.Scaffold
+import androidx.compose.material3.Snackbar
+import androidx.compose.material3.SnackbarDuration
 import androidx.compose.material3.SnackbarHost
 import androidx.compose.material3.SnackbarHostState
+import androidx.compose.material3.SnackbarResult
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.material3.TopAppBar
@@ -60,7 +64,9 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -110,8 +116,16 @@ fun NephoApp(
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
 
     LaunchedEffect(Unit) {
-        viewModel.snackbarEvents.collect { msg ->
-            snackbarHostState.showSnackbar(msg)
+        viewModel.snackbarEvents.collect { event ->
+            snackbarHostState.currentSnackbarData?.dismiss()
+            val result = snackbarHostState.showSnackbar(
+                message = event.message,
+                actionLabel = event.actionLabel,
+                duration = SnackbarDuration.Short
+            )
+            if (result == SnackbarResult.ActionPerformed) {
+                event.onAction?.invoke()
+            }
         }
     }
 
@@ -189,7 +203,16 @@ fun NephoApp(
             modifier = Modifier.fillMaxSize(),
             containerColor = ObsidianBackground,
             contentWindowInsets = WindowInsets.safeDrawing,
-            snackbarHost = { SnackbarHost(hostState = snackbarHostState) },
+            snackbarHost = {
+                SnackbarHost(hostState = snackbarHostState) { data ->
+                    Snackbar(
+                        snackbarData = data,
+                        containerColor = MidnightSurface,
+                        contentColor = MaterialTheme.colorScheme.onSurface,
+                        actionColor = CyanPulse
+                    )
+                }
+            },
             topBar = {
                 Column(modifier = Modifier.background(ObsidianBackground)) {
                     TopAppBar(
@@ -203,15 +226,24 @@ fun NephoApp(
                                     verticalAlignment = Alignment.CenterVertically,
                                     horizontalArrangement = Arrangement.spacedBy(8.dp)
                                 ) {
-                                    Box(
+                                    Image(
+                                        painter = painterResource(R.drawable.nepho_mark),
+                                        contentDescription = stringResource(R.string.app_name),
+                                        contentScale = ContentScale.Crop,
                                         modifier = Modifier
-                                            .size(9.dp)
-                                            .clip(CircleShape)
-                                            .background(EmeraldOk)
+                                            .size(28.dp)
+                                            .clip(RoundedCornerShape(7.dp))
+                                            .testTag("top_bar_nepho_logo")
                                     )
                                     Text(
                                         text = stringResource(R.string.app_name),
                                         style = MaterialTheme.typography.titleLarge
+                                    )
+                                    Box(
+                                        modifier = Modifier
+                                            .size(8.dp)
+                                            .clip(CircleShape)
+                                            .background(EmeraldOk)
                                     )
                                 }
                                 val sinceText = timeFmt.format(Date(sessionOpenedAt))
@@ -437,8 +469,13 @@ fun NephoApp(
                                         viewModel.openSourceApp(item)
                                     },
                                     onToggleStar = viewModel::toggleNotificationStar,
+                                    onSwipeToggleStar = viewModel::toggleNotificationStarFromSwipe,
+                                    onSwipeDismissItem = viewModel::dismissNotificationWithUndo,
+                                    onSwipeStarBlocked = viewModel::notifyStarredSwipeProtected,
+                                    onMarkGroupRead = viewModel::markAppGroupAsRead,
+                                    onClearGroup = viewModel::clearAppGroupWithUndo,
                                     onOpenReminderDialog = { item -> reminderTargetItem = item },
-                                    onDismissItem = viewModel::dismissNotification,
+                                    onDismissItem = viewModel::dismissNotificationWithUndo,
                                     onOpenVaultTab = { viewModel.selectTab(PulseTab.LINKS_VAULT) }
                                 )
                             }

@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -32,6 +33,8 @@ import androidx.compose.material.icons.filled.NotificationsActive
 import androidx.compose.material.icons.filled.Search
 import androidx.compose.material.icons.filled.Star
 import androidx.compose.material.icons.outlined.AlarmAdd
+import androidx.compose.material.icons.outlined.DeleteSweep
+import androidx.compose.material.icons.outlined.DoneAll
 import androidx.compose.material.icons.outlined.MarkEmailUnread
 import androidx.compose.material.icons.outlined.Shield
 import androidx.compose.material.icons.outlined.StarBorder
@@ -42,6 +45,7 @@ import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.Card
 import androidx.compose.material3.CardDefaults
+import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.Icon
@@ -51,16 +55,25 @@ import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.OutlinedTextFieldDefaults
 import androidx.compose.material3.Surface
+import androidx.compose.material3.SwipeToDismissBox
+import androidx.compose.material3.SwipeToDismissBoxValue
 import androidx.compose.material3.Text
 import androidx.compose.material3.minimumInteractiveComponentSize
+import androidx.compose.material3.rememberSwipeToDismissBoxState
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateMapOf
 import androidx.compose.runtime.remember
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.hapticfeedback.HapticFeedbackType
+import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -71,6 +84,8 @@ import com.example.data.SupportedApp
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.AmberSignalContainer
 import com.example.ui.theme.BorderHairline
+import com.example.ui.theme.CrimsonError
+import com.example.ui.theme.CrimsonErrorContainer
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
 import com.example.ui.theme.ElevatedSurface
@@ -105,6 +120,11 @@ fun FeedTab(
     onOpenThread: (PulseNotificationItem) -> Unit,
     onOpenApp: (PulseNotificationItem) -> Unit,
     onToggleStar: (String) -> Unit,
+    onSwipeToggleStar: (String) -> Unit,
+    onSwipeDismissItem: (String) -> Unit,
+    onSwipeStarBlocked: () -> Unit,
+    onMarkGroupRead: (packageName: String, appLabel: String) -> Unit,
+    onClearGroup: (packageName: String, appLabel: String) -> Unit,
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
     onDismissItem: (String) -> Unit,
     onOpenVaultTab: () -> Unit,
@@ -288,27 +308,38 @@ fun FeedTab(
 
             appGroups.forEach { (packageName, groupItems) ->
                 val isCollapsed = collapsedGroups[packageName] == true
+                val representative = groupItems.first()
+                val unreadCount = groupItems.count { !it.isRead }
+                val unstarredCount = groupItems.count { !it.isStarred }
                 item(key = "app_group_$packageName") {
                     AppGroupHeader(
-                        representative = groupItems.first(),
+                        representative = representative,
                         totalCount = groupItems.size,
-                        unreadCount = groupItems.count { !it.isRead },
+                        unreadCount = unreadCount,
+                        unstarredCount = unstarredCount,
                         collapsed = isCollapsed,
                         onToggleCollapsed = { collapsedGroups[packageName] = !isCollapsed },
-                        onOpenApp = { onOpenApp(groupItems.first()) }
+                        onOpenApp = { onOpenApp(representative) },
+                        onMarkGroupRead = { onMarkGroupRead(packageName, representative.appLabel) },
+                        onClearGroup = { onClearGroup(packageName, representative.appLabel) },
+                        modifier = Modifier.animateItem()
                     )
                 }
                 if (!isCollapsed) {
                     items(items = groupItems, key = { it.key }) { item ->
-                        NotificationFeedCard(
+                        SwipeableNotificationCard(
                             item = item,
                             timeText = timeFormatter.format(Date(item.postTime)),
                             onOpenThread = { onOpenThread(item) },
                             onOpenApp = { onOpenApp(item) },
                             onToggleStar = { onToggleStar(item.key) },
+                            onSwipeToggleStar = { onSwipeToggleStar(item.key) },
+                            onSwipeDismiss = { onSwipeDismissItem(item.key) },
+                            onSwipeStarBlocked = onSwipeStarBlocked,
                             onOpenReminderDialog = { onOpenReminderDialog(item) },
                             onDismiss = { onDismissItem(item.key) },
-                            onOpenVaultTab = onOpenVaultTab
+                            onOpenVaultTab = onOpenVaultTab,
+                            modifier = Modifier.animateItem()
                         )
                     }
                 }
@@ -479,13 +510,17 @@ private fun AppGroupHeader(
     representative: PulseNotificationItem,
     totalCount: Int,
     unreadCount: Int,
+    unstarredCount: Int,
     collapsed: Boolean,
     onToggleCollapsed: () -> Unit,
-    onOpenApp: () -> Unit
+    onOpenApp: () -> Unit,
+    onMarkGroupRead: () -> Unit,
+    onClearGroup: () -> Unit,
+    modifier: Modifier = Modifier
 ) {
     val app = representative.supportedApp
     Surface(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .testTag("app_group_header_${representative.packageName}")
             .clip(RoundedCornerShape(14.dp))
@@ -497,7 +532,7 @@ private fun AppGroupHeader(
         Row(
             modifier = Modifier
                 .fillMaxWidth()
-                .padding(horizontal = 12.dp, vertical = 10.dp),
+                .padding(start = 12.dp, end = 6.dp, top = 6.dp, bottom = 6.dp),
             verticalAlignment = Alignment.CenterVertically,
             horizontalArrangement = Arrangement.SpaceBetween
         ) {
@@ -531,7 +566,9 @@ private fun AppGroupHeader(
                         Text(
                             text = representative.appLabel,
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = app.accentColor
+                            color = app.accentColor,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
                         )
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
@@ -551,12 +588,184 @@ private fun AppGroupHeader(
                     )
                 }
             }
-            Icon(
-                imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
-                contentDescription = if (collapsed) "Expand ${representative.appLabel} group" else "Collapse ${representative.appLabel} group",
-                tint = MaterialTheme.colorScheme.onSurfaceVariant
-            )
+
+            Row(verticalAlignment = Alignment.CenterVertically) {
+                if (unreadCount > 0) {
+                    IconButton(
+                        onClick = onMarkGroupRead,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("group_mark_read_${representative.packageName}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.DoneAll,
+                            contentDescription = stringResource(R.string.action_group_mark_read, representative.appLabel),
+                            tint = CyanPulse,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                if (unstarredCount > 0) {
+                    IconButton(
+                        onClick = onClearGroup,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("group_clear_${representative.packageName}")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.DeleteSweep,
+                            contentDescription = stringResource(R.string.action_group_clear, representative.appLabel),
+                            tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
+                }
+                Icon(
+                    imageVector = if (collapsed) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                    contentDescription = if (collapsed) "Expand ${representative.appLabel} group" else "Collapse ${representative.appLabel} group",
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(end = 4.dp)
+                )
+            }
         }
+    }
+}
+
+@OptIn(ExperimentalMaterial3Api::class)
+@Composable
+private fun SwipeableNotificationCard(
+    item: PulseNotificationItem,
+    timeText: String,
+    onOpenThread: () -> Unit,
+    onOpenApp: () -> Unit,
+    onToggleStar: () -> Unit,
+    onSwipeToggleStar: () -> Unit,
+    onSwipeDismiss: () -> Unit,
+    onSwipeStarBlocked: () -> Unit,
+    onOpenReminderDialog: () -> Unit,
+    onDismiss: () -> Unit,
+    onOpenVaultTab: () -> Unit,
+    modifier: Modifier = Modifier
+) {
+    val haptics = LocalHapticFeedback.current
+    val currentStarred by rememberUpdatedState(item.isStarred)
+    val currentOnSwipeDismiss by rememberUpdatedState(onSwipeDismiss)
+    val currentOnSwipeStarBlocked by rememberUpdatedState(onSwipeStarBlocked)
+    val currentOnSwipeToggleStar by rememberUpdatedState(onSwipeToggleStar)
+
+    val dismissState = rememberSwipeToDismissBoxState(
+        confirmValueChange = { targetValue ->
+            when (targetValue) {
+                SwipeToDismissBoxValue.StartToEnd -> {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    if (currentStarred) {
+                        currentOnSwipeStarBlocked()
+                        false
+                    } else {
+                        currentOnSwipeDismiss()
+                        true
+                    }
+                }
+                SwipeToDismissBoxValue.EndToStart -> {
+                    haptics.performHapticFeedback(HapticFeedbackType.LongPress)
+                    currentOnSwipeToggleStar()
+                    false
+                }
+                SwipeToDismissBoxValue.Settled -> true
+            }
+        }
+    )
+
+    SwipeToDismissBox(
+        state = dismissState,
+        modifier = modifier
+            .fillMaxWidth()
+            .testTag("swipe_box_${item.key}"),
+        backgroundContent = {
+            val direction = dismissState.dismissDirection
+            val isSwipeRight = direction == SwipeToDismissBoxValue.StartToEnd
+            val isSwipeLeft = direction == SwipeToDismissBoxValue.EndToStart
+
+            val bgColor = when {
+                isSwipeRight && item.isStarred -> AmberSignalContainer
+                isSwipeRight -> CrimsonErrorContainer
+                isSwipeLeft -> AmberSignalContainer
+                else -> MidnightSurface
+            }
+            val borderColor = when {
+                isSwipeRight && item.isStarred -> AmberSignal.copy(alpha = 0.45f)
+                isSwipeRight -> CrimsonError.copy(alpha = 0.45f)
+                isSwipeLeft -> AmberSignal.copy(alpha = 0.45f)
+                else -> BorderHairline
+            }
+
+            Surface(
+                modifier = Modifier.fillMaxSize(),
+                shape = RoundedCornerShape(16.dp),
+                color = bgColor,
+                border = BorderStroke(1.dp, borderColor)
+            ) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .padding(horizontal = 20.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = if (isSwipeLeft) Arrangement.End else Arrangement.Start
+                ) {
+                    if (isSwipeRight) {
+                        val icon = if (item.isStarred) Icons.Outlined.Shield else Icons.Outlined.DeleteSweep
+                        val tint = if (item.isStarred) AmberSignal else CrimsonError
+                        val label = if (item.isStarred) {
+                            stringResource(R.string.swipe_label_protected)
+                        } else {
+                            stringResource(R.string.swipe_label_dismiss)
+                        }
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = tint,
+                            modifier = Modifier.size(22.dp)
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = tint
+                        )
+                    } else if (isSwipeLeft) {
+                        val icon = if (item.isStarred) Icons.Outlined.StarBorder else Icons.Filled.Star
+                        val label = if (item.isStarred) {
+                            stringResource(R.string.swipe_label_unstar)
+                        } else {
+                            stringResource(R.string.swipe_label_star)
+                        }
+                        Text(
+                            text = label,
+                            style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.Bold),
+                            color = AmberSignal
+                        )
+                        Spacer(Modifier.width(8.dp))
+                        Icon(
+                            imageVector = icon,
+                            contentDescription = null,
+                            tint = AmberSignal,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
+                }
+            }
+        }
+    ) {
+        NotificationFeedCard(
+            item = item,
+            timeText = timeText,
+            onOpenThread = onOpenThread,
+            onOpenApp = onOpenApp,
+            onToggleStar = onToggleStar,
+            onOpenReminderDialog = onOpenReminderDialog,
+            onDismiss = onDismiss,
+            onOpenVaultTab = onOpenVaultTab
+        )
     }
 }
 
@@ -839,20 +1048,15 @@ private fun EmptyFeedCard(
             horizontalAlignment = Alignment.CenterHorizontally,
             verticalArrangement = Arrangement.spacedBy(12.dp)
         ) {
-            Box(
+            Image(
+                painter = painterResource(R.drawable.nepho_logo),
+                contentDescription = stringResource(R.string.app_name),
+                contentScale = ContentScale.Crop,
                 modifier = Modifier
-                    .size(56.dp)
-                    .clip(CircleShape)
-                    .background(CyanPulseContainer),
-                contentAlignment = Alignment.Center
-            ) {
-                Icon(
-                    imageVector = Icons.Default.NotificationsActive,
-                    contentDescription = null,
-                    tint = CyanPulse,
-                    modifier = Modifier.size(28.dp)
-                )
-            }
+                    .size(72.dp)
+                    .clip(RoundedCornerShape(18.dp))
+                    .testTag("empty_feed_nepho_logo")
+            )
             Text(
                 text = stringResource(R.string.feed_empty_title),
                 style = MaterialTheme.typography.titleLarge

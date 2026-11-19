@@ -329,6 +329,68 @@ class PulseRepository private constructor(
         dao.dismissByKey(key)
     }
 
+    /**
+     * Dismisses a single notification while keeping in-memory reply and conversation intents
+     * alive until the next 24h purge or session reset so tapping Undo restores full functionality.
+     */
+    suspend fun dismissNotificationWithUndo(key: String): UndoDismissBatch? {
+        val existing = dao.getByKey(key) ?: return null
+        if (existing.isDismissed) return null
+        NotificationManagerCompat.from(appContext).cancel(existing.notificationId)
+        NephoNotificationListener.cancelSystemNotification(key)
+        ReminderWorker.cancelReminder(appContext, key)
+        dao.dismissByKey(key)
+        return UndoDismissBatch(
+            items = listOf(
+                DismissedItemSnapshot(
+                    key = existing.key,
+                    reminderAt = existing.reminderAt,
+                    reminderNote = existing.reminderNote
+                )
+            )
+        )
+    }
+
+    /**
+     * Dismisses all active non-starred notifications for [packageName], preserving starred items
+     * and returning an [UndoDismissBatch] for one-tap restoration.
+     */
+    suspend fun dismissUnstarredForPackageWithUndo(packageName: String): UndoDismissBatch {
+        val rollingCutoff = computeRetentionCutoff()
+        val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
+        val effectiveCutoff = maxOf(rollingCutoff, sessionOpenedAt)
+        val targets = dao.getActiveUnstarredByPackage(packageName, effectiveCutoff)
+        val keptStarred = dao.countActiveStarredByPackage(packageName)
+        val snapshots = targets.map { entity ->
+            NotificationManagerCompat.from(appContext).cancel(entity.notificationId)
+            NephoNotificationListener.cancelSystemNotification(entity.key)
+            ReminderWorker.cancelReminder(appContext, entity.key)
+            dao.dismissByKey(entity.key)
+            DismissedItemSnapshot(
+                key = entity.key,
+                reminderAt = entity.reminderAt,
+                reminderNote = entity.reminderNote
+            )
+        }
+        return UndoDismissBatch(items = snapshots, keptStarredCount = keptStarred)
+    }
+
+    suspend fun restoreDismissedBatch(batch: UndoDismissBatch): Int {
+        val now = System.currentTimeMillis()
+        batch.items.forEach { snapshot ->
+            val validReminderAt = snapshot.reminderAt?.takeIf { it > now }
+            val validNote = if (validReminderAt != null) snapshot.reminderNote else null
+            dao.restoreDismissedByKey(snapshot.key, validReminderAt, validNote)
+            if (validReminderAt != null) {
+                ReminderWorker.scheduleReminder(appContext, snapshot.key, validReminderAt, validNote)
+            }
+        }
+        return batch.items.size
+    }
+
+    suspend fun markPackageAsRead(packageName: String): Int =
+        dao.markPackageAsRead(packageName)
+
     suspend fun executeSecondaryAction(
         key: String,
         actionLabel: String,
@@ -403,6 +465,17 @@ private fun supportsGifMimeType(mimeType: String): Boolean =
 data class IngestResult(
     val extractedLinkCount: Int,
     val purgedExpiredCount: Int
+)
+
+data class DismissedItemSnapshot(
+    val key: String,
+    val reminderAt: Long?,
+    val reminderNote: String?
+)
+
+data class UndoDismissBatch(
+    val items: List<DismissedItemSnapshot>,
+    val keptStarredCount: Int = 0
 )
 
 private fun PulseNotificationEntity.toDomain(): PulseNotificationItem =
