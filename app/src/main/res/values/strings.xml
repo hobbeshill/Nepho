@@ -47,6 +47,7 @@
     <string name="action_unstar_message">Unstar message</string>
     <string name="badge_starred_protected">STARRED • NEVER PURGED</string>
     <string name="action_open_app">Open %1$s</string>
+    <string name="open_app_unavailable">Couldn’t open %1$s. Make sure the app is installed and available.</string>
     <string name="media_load_failed">Could not load this picture or GIF.</string>
     <string name="thread_close">Close thread</string>
     <string name="thread_dismiss_all">Dismiss Thread</string>

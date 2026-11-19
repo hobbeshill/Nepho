@@ -469,6 +469,7 @@ fun NephoApp(
                                     onOpenApp = { item ->
                                         viewModel.openSourceApp(item)
                                     },
+                                    onOpenSelectedApp = viewModel::openSelectedApp,
                                     onToggleStar = viewModel::toggleNotificationStar,
                                     onSwipeToggleStar = viewModel::toggleNotificationStarFromSwipe,
                                     onSwipeDismissItem = viewModel::dismissNotificationWithUndo,

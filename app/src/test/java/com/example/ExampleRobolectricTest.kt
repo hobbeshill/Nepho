@@ -2,8 +2,10 @@ package com.example
 
 import android.app.Notification
 import android.app.PendingIntent
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.graphics.drawable.Icon
@@ -19,6 +21,7 @@ import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UrlExtractor
 import com.example.notifications.NephoNotificationListener
+import com.example.ui.PulseViewModel
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -82,6 +85,29 @@ class ExampleRobolectricTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val appName = context.getString(R.string.app_name)
         assertEquals("Nepho", appName)
+    }
+
+    @Test
+    fun `selected app shortcut launches the app or reports when unavailable`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val packageManager = shadowOf(context.packageManager)
+        val component = ComponentName(SupportedApp.GMAIL.packageName, "MainActivity")
+        packageManager.addActivityIfNotPresent(component)
+        packageManager.addIntentFilterForActivity(component, IntentFilter(Intent.ACTION_MAIN).apply {
+            addCategory(Intent.CATEGORY_LAUNCHER)
+        })
+        val viewModel = PulseViewModel(context)
+
+        viewModel.openSelectedApp(SupportedApp.GMAIL)
+        val intent = shadowOf(context).nextStartedActivity
+        assertEquals(component, intent.component)
+        assertTrue(intent.flags and Intent.FLAG_ACTIVITY_NEW_TASK != 0)
+
+        val event = async(start = CoroutineStart.UNDISPATCHED) {
+            viewModel.snackbarEvents.first()
+        }
+        viewModel.openSelectedApp(SupportedApp.TEAMSNAP)
+        assertEquals(context.getString(R.string.open_app_unavailable, "TeamSnap"), event.await().message)
     }
 
     @Test

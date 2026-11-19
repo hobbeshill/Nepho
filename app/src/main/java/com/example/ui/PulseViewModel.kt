@@ -1,10 +1,13 @@
 package com.example.ui
 
 import android.app.Application
+import android.content.ActivityNotFoundException
+import android.content.Intent
 import android.net.Uri
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.R
 import com.example.data.AppShadePreference
 import com.example.data.ExtractedLinkItem
 import com.example.data.PulseNotificationItem
@@ -514,6 +517,25 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             emitSnackbar(
                 "The original ${item.appLabel} conversation is no longer available. Open it in ${item.appLabel}."
             )
+        }
+    }
+
+    fun openSelectedApp(app: SupportedApp) {
+        val context = getApplication<Application>()
+        val intent = context.packageManager.getLaunchIntentForPackage(app.packageName)
+        if (intent == null) {
+            emitSnackbar(context.getString(R.string.open_app_unavailable, app.displayName))
+            return
+        }
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        try {
+            context.startActivity(intent)
+        } catch (e: ActivityNotFoundException) {
+            Log.w(TAG, "Cannot launch ${app.packageName}", e)
+            emitSnackbar(context.getString(R.string.open_app_unavailable, app.displayName))
+        } catch (e: SecurityException) {
+            Log.w(TAG, "Cannot launch ${app.packageName}", e)
+            emitSnackbar(context.getString(R.string.open_app_unavailable, app.displayName))
         }
     }
 

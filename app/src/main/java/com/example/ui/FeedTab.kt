@@ -119,6 +119,7 @@ fun FeedTab(
     onDismissBanner: () -> Unit,
     onOpenThread: (PulseNotificationItem) -> Unit,
     onOpenApp: (PulseNotificationItem) -> Unit,
+    onOpenSelectedApp: (SupportedApp) -> Unit,
     onToggleStar: (String) -> Unit,
     onSwipeToggleStar: (String) -> Unit,
     onSwipeDismissItem: (String) -> Unit,
@@ -289,6 +290,25 @@ fun FeedTab(
                             selectedLabelColor = AmberSignal
                         )
                     )
+                }
+            }
+        }
+
+        if (selectedAppFilter != null) {
+            item(key = "selected_app_link") {
+                OutlinedButton(
+                    onClick = { onOpenSelectedApp(selectedAppFilter) },
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("selected_app_link")
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(stringResource(R.string.action_open_app, selectedAppFilter.displayName))
                 }
             }
         }
