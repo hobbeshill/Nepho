@@ -43,6 +43,40 @@ class MainActivity : ComponentActivity() {
                 ) {
                     viewModel.refreshNotificationPermission()
                 }
+                val coarseLocationPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    if (granted) {
+                        viewModel.useCurrentLocationForWeather()
+                    } else {
+                        viewModel.notifyLocationPermissionDenied()
+                    }
+                }
+                val calendarPermissionLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.RequestPermission()
+                ) { granted ->
+                    if (granted) {
+                        viewModel.refreshCalendarSchedule()
+                    } else {
+                        viewModel.notifyCalendarPermissionDenied()
+                    }
+                }
+                val screenLockAdminLauncher = rememberLauncherForActivityResult(
+                    contract = ActivityResultContracts.StartActivityForResult()
+                ) {
+                    val enabled = com.example.launcher.HomeGestureActions.isScreenLockEnabled(this)
+                    viewModel.onScreenLockAdminResult(enabled)
+                }
+                val launchScreenLockAdminPrompt: () -> Unit = {
+                    runCatching {
+                        screenLockAdminLauncher.launch(
+                            com.example.launcher.HomeGestureActions.buildActivateScreenLockIntent(this)
+                        )
+                    }.onFailure { e ->
+                        Log.w("MainActivity", "Device admin activation unavailable", e)
+                        viewModel.notifyScreenLockUnavailable()
+                    }
+                }
 
                 NephoApp(
                     viewModel = viewModel,
@@ -71,7 +105,29 @@ class MainActivity : ComponentActivity() {
                                 Toast.LENGTH_LONG
                             ).show()
                         }
-                    }
+                    },
+                    onRequestWeatherLocation = {
+                        if (com.example.launcher.WeatherService.hasCoarseLocationPermission(this)) {
+                            viewModel.useCurrentLocationForWeather()
+                        } else {
+                            coarseLocationPermissionLauncher.launch(Manifest.permission.ACCESS_COARSE_LOCATION)
+                        }
+                    },
+                    onRequestCalendarPermission = {
+                        if (com.example.launcher.CalendarScheduleProvider.hasCalendarPermission(this)) {
+                            viewModel.refreshCalendarSchedule()
+                        } else {
+                            calendarPermissionLauncher.launch(Manifest.permission.READ_CALENDAR)
+                        }
+                    },
+                    onDoubleTapScreenOff = {
+                        when (com.example.launcher.HomeGestureActions.turnScreenOff(this)) {
+                            com.example.launcher.ScreenLockResult.LOCKED -> Unit
+                            com.example.launcher.ScreenLockResult.NEEDS_ADMIN_ACTIVATION -> launchScreenLockAdminPrompt()
+                            com.example.launcher.ScreenLockResult.UNAVAILABLE -> viewModel.notifyScreenLockUnavailable()
+                        }
+                    },
+                    onEnableScreenLockAdmin = launchScreenLockAdminPrompt
                 )
             }
         }
@@ -86,9 +142,23 @@ class MainActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
+        handleHomeIntent(intent)
         handleIncomingShareIntent(intent)
         handleDigestIntent(intent)
         handleWidgetIntent(intent)
+    }
+
+    private fun handleHomeIntent(intent: Intent?) {
+        if (intent == null) return
+        val isHomeOrMainReturn = intent.action == Intent.ACTION_MAIN &&
+            (intent.hasCategory(Intent.CATEGORY_HOME) ||
+                (intent.hasCategory(Intent.CATEGORY_LAUNCHER) &&
+                    !intent.hasExtra("open_digest") &&
+                    !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID) &&
+                    !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE)))
+        if (isHomeOrMainReturn) {
+            viewModel.onHomeButtonPressed()
+        }
     }
 
     private fun handleDigestIntent(intent: Intent?) {

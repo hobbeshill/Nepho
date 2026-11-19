@@ -37,6 +37,7 @@ import androidx.compose.material.icons.filled.SkipNext
 import androidx.compose.material.icons.filled.SkipPrevious
 import androidx.compose.material.icons.outlined.AlarmAdd
 import androidx.compose.material.icons.outlined.NotificationsActive
+import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material3.AssistChip
 import androidx.compose.material3.AssistChipDefaults
 import androidx.compose.material3.Button
@@ -76,7 +77,9 @@ import androidx.compose.ui.window.Dialog
 import androidx.compose.ui.window.DialogProperties
 import com.example.R
 import com.example.launcher.ClockAlarmHelper
+import com.example.launcher.LauncherAppInfo
 import com.example.launcher.MediaPlaybackState
+import com.example.launcher.WeatherUiState
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.AmberSignalContainer
 import com.example.ui.theme.BorderHairline
@@ -100,6 +103,8 @@ import java.util.Locale
 fun HomeClockCard(
     nextAlarmSummary: String?,
     onClick: () -> Unit,
+    weatherState: WeatherUiState = WeatherUiState(),
+    onWeatherClick: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
@@ -128,9 +133,7 @@ fun HomeClockCard(
     Card(
         modifier = modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(20.dp))
-            .clickable(onClick = onClick)
-            .testTag("home_clock_card"),
+            .testTag("home_clock_card_container"),
         shape = RoundedCornerShape(20.dp),
         border = BorderStroke(1.dp, BorderHairline),
         colors = CardDefaults.cardColors(containerColor = MidnightSurface)
@@ -147,16 +150,22 @@ fun HomeClockCard(
                         )
                     )
                 )
-                .padding(horizontal = 18.dp, vertical = 16.dp)
+                .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.SpaceBetween,
+                horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
+                // Clock + Date + Next Alarm (tap to set quick alarm or open Clock)
                 Column(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
-                    modifier = Modifier.weight(1f)
+                    modifier = Modifier
+                        .weight(1f)
+                        .clip(RoundedCornerShape(14.dp))
+                        .clickable(onClick = onClick)
+                        .padding(vertical = 2.dp)
+                        .testTag("home_clock_card")
                 ) {
                     Row(
                         verticalAlignment = Alignment.Bottom,
@@ -167,8 +176,8 @@ fun HomeClockCard(
                             style = MaterialTheme.typography.displaySmall.copy(
                                 fontFamily = SpaceGroteskFontFamily,
                                 fontWeight = FontWeight.Bold,
-                                fontSize = 42.sp,
-                                lineHeight = 46.sp,
+                                fontSize = 40.sp,
+                                lineHeight = 44.sp,
                                 letterSpacing = (-1.0).sp
                             ),
                             color = MaterialTheme.colorScheme.onBackground,
@@ -208,9 +217,9 @@ fun HomeClockCard(
                         )
                     ) {
                         Row(
-                            modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp),
+                            modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
                             verticalAlignment = Alignment.CenterVertically,
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(5.dp)
                         ) {
                             Icon(
                                 imageVector = if (nextAlarmSummary != null) {
@@ -238,20 +247,109 @@ fun HomeClockCard(
                     }
                 }
 
+                // Weather Area inside Clock Card (tap to view/configure weather & add/open weather app shortcut)
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = CyanPulseContainer,
-                    border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.35f)),
+                    shape = RoundedCornerShape(16.dp),
+                    color = ElevatedSurface.copy(alpha = 0.92f),
+                    border = BorderStroke(
+                        1.dp,
+                        if (weatherState.hasWeatherData || weatherState.shortcutApp != null) {
+                            CyanPulse.copy(alpha = 0.35f)
+                        } else {
+                            BorderHairline
+                        }
+                    ),
                     modifier = Modifier
-                        .size(48.dp)
+                        .widthIn(min = 112.dp, max = 148.dp)
+                        .minimumInteractiveComponentSize()
+                        .clip(RoundedCornerShape(16.dp))
+                        .clickable(onClick = onWeatherClick)
+                        .testTag("home_clock_weather_area")
                 ) {
-                    Box(contentAlignment = Alignment.Center) {
-                        Icon(
-                            imageVector = Icons.Outlined.AlarmAdd,
-                            contentDescription = stringResource(R.string.clock_tap_hint),
-                            tint = CyanPulse,
-                            modifier = Modifier.size(22.dp)
-                        )
+                    Column(
+                        modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+                        horizontalAlignment = Alignment.End,
+                        verticalArrangement = Arrangement.spacedBy(3.dp)
+                    ) {
+                        if (weatherState.hasWeatherData) {
+                            Row(
+                                verticalAlignment = Alignment.CenterVertically,
+                                horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            ) {
+                                WeatherConditionIcon(
+                                    kind = weatherState.conditionKind,
+                                    size = 22.dp
+                                )
+                                Text(
+                                    text = "${weatherState.displayTemp}${weatherState.unitSuffix}",
+                                    style = MaterialTheme.typography.titleLarge.copy(
+                                        fontFamily = SpaceGroteskFontFamily,
+                                        fontWeight = FontWeight.Bold
+                                    ),
+                                    color = MaterialTheme.colorScheme.onBackground,
+                                    maxLines = 1,
+                                    modifier = Modifier.testTag("home_clock_weather_temp")
+                                )
+                            }
+                            Text(
+                                text = weatherState.conditionLabel,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = CyanPulse,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                            val subLabel = weatherState.locationName.substringBefore(",")
+                                .ifBlank { weatherState.shortcutApp?.label.orEmpty() }
+                            if (subLabel.isNotBlank()) {
+                                Row(
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(3.dp)
+                                ) {
+                                    Text(
+                                        text = subLabel,
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                    if (weatherState.shortcutApp != null) {
+                                        Icon(
+                                            imageVector = Icons.AutoMirrored.Filled.OpenInNew,
+                                            contentDescription = null,
+                                            tint = CyanPulse,
+                                            modifier = Modifier.size(11.dp)
+                                        )
+                                    }
+                                }
+                            }
+                        } else {
+                            WeatherConditionIcon(
+                                kind = weatherState.conditionKind,
+                                size = 24.dp
+                            )
+                            Text(
+                                text = if (weatherState.isLoading) {
+                                    stringResource(R.string.weather_loading)
+                                } else {
+                                    stringResource(R.string.weather_add_cta)
+                                },
+                                style = MaterialTheme.typography.labelMedium.copy(
+                                    fontWeight = FontWeight.SemiBold
+                                ),
+                                color = CyanPulse,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.testTag("home_clock_weather_cta")
+                            )
+                            Text(
+                                text = weatherState.shortcutApp?.label
+                                    ?: stringResource(R.string.weather_tap_configure),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
                     }
                 }
             }
@@ -615,6 +713,8 @@ fun HomeMusicCard(
     onSkipNext: () -> Unit,
     onOpenMusicApp: () -> Unit,
     onGrantNotificationAccess: () -> Unit,
+    preferredMusicApp: LauncherAppInfo? = null,
+    onChooseMusicService: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val accent = if (mediaState.isActive && mediaState.isPlaying) EmeraldOk else CyanPulse
@@ -753,6 +853,20 @@ fun HomeMusicCard(
                         tint = MaterialTheme.colorScheme.onSurfaceVariant,
                         modifier = Modifier.size(18.dp)
                     )
+
+                    IconButton(
+                        onClick = onChooseMusicService,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .testTag("music_choose_service_button")
+                    ) {
+                        Icon(
+                            imageVector = Icons.Outlined.Tune,
+                            contentDescription = stringResource(R.string.music_service_choose_desc),
+                            tint = CyanPulse,
+                            modifier = Modifier.size(20.dp)
+                        )
+                    }
                 }
 
                 Row(
@@ -826,21 +940,29 @@ fun HomeMusicCard(
                     .padding(horizontal = 14.dp, vertical = 12.dp)
                     .testTag("music_idle_row"),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(12.dp)
+                horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(44.dp)
-                        .clip(RoundedCornerShape(12.dp))
-                        .background(HighSurface),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Icon(
-                        imageVector = Icons.Filled.MusicNote,
-                        contentDescription = null,
-                        tint = CyanPulse,
-                        modifier = Modifier.size(22.dp)
+                if (preferredMusicApp != null) {
+                    AppIconBadge(
+                        packageName = preferredMusicApp.packageName,
+                        label = preferredMusicApp.label,
+                        size = 44.dp
                     )
+                } else {
+                    Box(
+                        modifier = Modifier
+                            .size(44.dp)
+                            .clip(RoundedCornerShape(12.dp))
+                            .background(HighSurface),
+                        contentAlignment = Alignment.Center
+                    ) {
+                        Icon(
+                            imageVector = Icons.Filled.MusicNote,
+                            contentDescription = null,
+                            tint = CyanPulse,
+                            modifier = Modifier.size(22.dp)
+                        )
+                    }
                 }
 
                 Column(
@@ -848,20 +970,46 @@ fun HomeMusicCard(
                     verticalArrangement = Arrangement.spacedBy(2.dp)
                 ) {
                     Text(
-                        text = stringResource(R.string.music_idle_title),
+                        text = preferredMusicApp?.label ?: stringResource(R.string.music_idle_title),
                         style = MaterialTheme.typography.titleSmall,
-                        color = MaterialTheme.colorScheme.onSurface
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        modifier = Modifier.testTag("music_idle_title_text")
                     )
                     Text(
-                        text = if (mediaState.hasSessionAccess) {
-                            stringResource(R.string.music_idle_subtitle)
-                        } else {
-                            stringResource(R.string.music_access_needed)
+                        text = when {
+                            preferredMusicApp != null && mediaState.hasSessionAccess -> {
+                                stringResource(R.string.music_service_connected_subtitle, preferredMusicApp.label)
+                            }
+                            preferredMusicApp != null -> {
+                                stringResource(R.string.music_service_connected_need_access, preferredMusicApp.label)
+                            }
+                            mediaState.hasSessionAccess -> {
+                                stringResource(R.string.music_idle_subtitle)
+                            }
+                            else -> {
+                                stringResource(R.string.music_access_needed)
+                            }
                         },
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 2,
                         overflow = TextOverflow.Ellipsis
+                    )
+                }
+
+                IconButton(
+                    onClick = onChooseMusicService,
+                    modifier = Modifier
+                        .minimumInteractiveComponentSize()
+                        .testTag("music_choose_service_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.Tune,
+                        contentDescription = stringResource(R.string.music_service_choose_desc),
+                        tint = CyanPulse,
+                        modifier = Modifier.size(20.dp)
                     )
                 }
 

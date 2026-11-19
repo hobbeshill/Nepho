@@ -1,7 +1,6 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -71,10 +70,8 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
-import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -387,13 +384,7 @@ fun LazyListScope.feedSectionItems(
             }
         }
 
-        if (notifications.isEmpty()) {
-            item(key = "empty_feed") {
-                EmptyFeedCard(
-                    sessionSince = timeFormatter.format(Date(sessionOpenedAt))
-                )
-            }
-        } else {
+        if (notifications.isNotEmpty()) {
             // Group all notifications from the same app together, newest group first
             val appGroups = notifications
                 .groupBy { it.packageName }
@@ -1118,47 +1109,6 @@ private fun NotificationFeedCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant
                 )
             }
-        }
-    }
-}
-
-@Composable
-private fun EmptyFeedCard(
-    sessionSince: String
-) {
-    Card(
-        modifier = Modifier
-            .fillMaxWidth()
-            .testTag("empty_feed_card"),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, BorderHairline),
-        colors = CardDefaults.cardColors(containerColor = MidnightSurface)
-    ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(24.dp),
-            horizontalAlignment = Alignment.CenterHorizontally,
-            verticalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Image(
-                painter = painterResource(R.drawable.nepho_logo),
-                contentDescription = stringResource(R.string.app_name),
-                contentScale = ContentScale.Crop,
-                modifier = Modifier
-                    .size(72.dp)
-                    .clip(RoundedCornerShape(18.dp))
-                    .testTag("empty_feed_nepho_logo")
-            )
-            Text(
-                text = stringResource(R.string.feed_empty_title),
-                style = MaterialTheme.typography.titleLarge
-            )
-            Text(
-                text = stringResource(R.string.feed_empty_subtitle, sessionSince),
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
         }
     }
 }

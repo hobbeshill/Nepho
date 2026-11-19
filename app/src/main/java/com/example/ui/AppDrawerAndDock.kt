@@ -32,6 +32,7 @@ import androidx.compose.material.icons.automirrored.filled.KeyboardArrowRight
 import androidx.compose.material.icons.filled.AccessTime
 import androidx.compose.material.icons.filled.Add
 import androidx.compose.material.icons.filled.Apps
+import androidx.compose.material.icons.filled.CalendarToday
 import androidx.compose.material.icons.filled.Check
 import androidx.compose.material.icons.filled.Close
 import androidx.compose.material.icons.filled.DynamicFeed
@@ -101,6 +102,7 @@ import kotlinx.coroutines.withContext
 enum class HomeSectionTarget {
     CLOCK,
     MUSIC,
+    CALENDAR,
     FEED,
     VAULT,
     APPS
@@ -571,6 +573,15 @@ fun ShortcutDrawerSheet(
                     tag = "drawer_jump_music",
                     onClick = {
                         onJumpToSection(HomeSectionTarget.MUSIC)
+                        onDismiss()
+                    }
+                )
+                SectionJumpChip(
+                    label = stringResource(R.string.dock_jump_calendar),
+                    icon = Icons.Filled.CalendarToday,
+                    tag = "drawer_jump_calendar",
+                    onClick = {
+                        onJumpToSection(HomeSectionTarget.CALENDAR)
                         onDismiss()
                     }
                 )

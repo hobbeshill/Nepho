@@ -34,6 +34,12 @@ data class MediaPlaybackState(
     val hasSessionAccess: Boolean = false
 )
 
+data class MediaSessionCandidate(
+    val packageName: String?,
+    val isPlaying: Boolean,
+    val hasTitle: Boolean
+)
+
 class MediaPlaybackController(private val appContext: Context) {
 
     private val mainHandler = Handler(Looper.getMainLooper())
@@ -43,6 +49,9 @@ class MediaPlaybackController(private val appContext: Context) {
 
     private val _state = MutableStateFlow(MediaPlaybackState())
     val state: StateFlow<MediaPlaybackState> = _state.asStateFlow()
+
+    @Volatile
+    private var preferredPackage: String? = null
 
     private var activeController: MediaController? = null
     private var isListeningSessions = false
@@ -63,6 +72,13 @@ class MediaPlaybackController(private val appContext: Context) {
 
     private val sessionsChangedListener = MediaSessionManager.OnActiveSessionsChangedListener { controllers ->
         bindBestController(controllers.orEmpty(), hasSessionAccess = true)
+    }
+
+    fun setPreferredPackage(packageName: String?) {
+        val cleaned = packageName?.trim()?.takeIf { it.isNotEmpty() }
+        if (preferredPackage == cleaned) return
+        preferredPackage = cleaned
+        refresh()
     }
 
     fun refresh() {
@@ -124,7 +140,11 @@ class MediaPlaybackController(private val appContext: Context) {
             .onFailure { Log.w(TAG, "skipPrevious failed", it) }
     }
 
-    fun openActiveMediaApp(context: Context, fallbackMusicPackage: String?): Boolean {
+    fun openActiveMediaApp(
+        context: Context,
+        preferredMusicPackage: String? = null,
+        fallbackMusicPackage: String? = null
+    ): Boolean {
         val controller = activeController
         if (controller != null) {
             val sessionActivity = runCatching { controller.sessionActivity }.getOrNull()
@@ -149,6 +169,13 @@ class MediaPlaybackController(private val appContext: Context) {
             if (!pkg.isNullOrBlank() && LauncherAppCatalog.launchPackage(context, pkg)) {
                 return true
             }
+        }
+
+        val preferred = preferredMusicPackage ?: preferredPackage
+        if (!preferred.isNullOrBlank() &&
+            LauncherAppCatalog.launchPackage(context, preferred)
+        ) {
+            return true
         }
 
         if (!fallbackMusicPackage.isNullOrBlank() &&
@@ -181,15 +208,20 @@ class MediaPlaybackController(private val appContext: Context) {
     }
 
     private fun bindBestController(controllers: List<MediaController>, hasSessionAccess: Boolean) {
-        val best = controllers.firstOrNull { ctrl ->
+        val candidates = controllers.map { ctrl ->
             val st = ctrl.playbackState?.state
-            st == PlaybackState.STATE_PLAYING || st == PlaybackState.STATE_BUFFERING
-        } ?: controllers.firstOrNull { ctrl ->
+            val isPlaying = st == PlaybackState.STATE_PLAYING || st == PlaybackState.STATE_BUFFERING
             val meta = ctrl.metadata
             val title = meta?.getString(MediaMetadata.METADATA_KEY_TITLE)
                 ?: meta?.getString(MediaMetadata.METADATA_KEY_DISPLAY_TITLE)
-            !title.isNullOrBlank()
-        } ?: controllers.firstOrNull()
+            MediaSessionCandidate(
+                packageName = ctrl.packageName,
+                isPlaying = isPlaying,
+                hasTitle = !title.isNullOrBlank()
+            )
+        }
+        val bestIndex = selectBestControllerIndex(candidates, preferredPackage)
+        val best = controllers.getOrNull(bestIndex)
 
         if (activeController?.sessionToken != best?.sessionToken) {
             detachActiveController()
@@ -276,5 +308,31 @@ class MediaPlaybackController(private val appContext: Context) {
 
     companion object {
         private const val TAG = "MediaPlaybackController"
+
+        fun selectBestControllerIndex(
+            candidates: List<MediaSessionCandidate>,
+            preferredPackage: String?
+        ): Int {
+            if (candidates.isEmpty()) return -1
+            if (!preferredPackage.isNullOrBlank()) {
+                val preferredPlaying = candidates.indexOfFirst {
+                    it.packageName == preferredPackage && it.isPlaying
+                }
+                if (preferredPlaying >= 0) return preferredPlaying
+
+                val preferredAny = candidates.indexOfFirst {
+                    it.packageName == preferredPackage
+                }
+                if (preferredAny >= 0) return preferredAny
+            }
+
+            val anyPlaying = candidates.indexOfFirst { it.isPlaying }
+            if (anyPlaying >= 0) return anyPlaying
+
+            val anyWithTitle = candidates.indexOfFirst { it.hasTitle }
+            if (anyWithTitle >= 0) return anyWithTitle
+
+            return 0
+        }
     }
 }

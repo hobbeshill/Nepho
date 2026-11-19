@@ -14,15 +14,35 @@ import androidx.compose.ui.test.performTextInput
 import com.example.data.CachedGifAttachment
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
+import com.example.launcher.CalendarDayGroup
+import com.example.launcher.CalendarEventItem
+import com.example.launcher.CalendarScheduleState
 import com.example.launcher.LauncherAppInfo
 import com.example.launcher.MediaPlaybackState
+import com.example.launcher.WeatherUiState
 import com.example.ui.BottomShortcutDock
 import com.example.ui.ComposeCaptureDialog
 import com.example.ui.FeedTab
+import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.material3.Button
+import androidx.compose.material3.Text
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.test.doubleClick
+import androidx.compose.ui.test.performTouchInput
+import androidx.compose.ui.test.swipeLeft
+import androidx.compose.ui.test.swipeRight
+import androidx.compose.ui.test.swipeUp
+import com.example.ui.HomeCalendarCard
 import com.example.ui.HomeClockCard
 import com.example.ui.HomeMusicCard
+import com.example.ui.MusicServicePickerDialog
 import com.example.ui.QuickAlarmDialog
+import com.example.ui.homeScreenGestures
 import com.example.ui.ThreadPopupDialog
+import com.example.ui.WeatherSetupDialog
 import com.example.ui.theme.NephoTheme
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -99,6 +119,7 @@ class ChromeOsUiTest {
             }
         }
 
+        composeRule.onNodeWithTag("empty_feed_card").assertDoesNotExist()
         composeRule.onNodeWithTag("selected_app_link").assertDoesNotExist()
         composeRule.onNodeWithTag("filter_chip_gmail").performClick()
         composeRule.onNodeWithTag("selected_app_link").performScrollTo()
@@ -295,4 +316,282 @@ class ChromeOsUiTest {
             assertTrue(expandedDock)
         }
     }
+
+    @Test
+    fun `clock weather area opens weather dialog and lets user add and launch a weather app shortcut`() {
+        val showWeatherDialog = mutableStateOf(false)
+        val selectedShortcut = mutableStateOf<LauncherAppInfo?>(null)
+        var openedShortcutApp = false
+
+        val weatherApp = LauncherAppInfo("com.accuweather.android", "Main", "AccuWeather", "A")
+        val chromeApp = LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C")
+
+        composeRule.setContent {
+            NephoTheme {
+                val weatherState = WeatherUiState(
+                    locationName = "Seattle, WA",
+                    latitude = 47.6062,
+                    longitude = -122.3321,
+                    tempC = 20.0,
+                    highC = 22.0,
+                    lowC = 13.0,
+                    weatherCode = 0,
+                    isDay = true,
+                    useFahrenheit = true,
+                    shortcutApp = selectedShortcut.value
+                )
+                HomeClockCard(
+                    nextAlarmSummary = null,
+                    onClick = {},
+                    weatherState = weatherState,
+                    onWeatherClick = { showWeatherDialog.value = true }
+                )
+                if (showWeatherDialog.value) {
+                    WeatherSetupDialog(
+                        weatherState = weatherState,
+                        installedApps = listOf(chromeApp, weatherApp),
+                        citySearchResults = emptyList(),
+                        isSearchingCities = false,
+                        onSearchCities = {},
+                        onSelectLocation = {},
+                        onUseCurrentLocation = {},
+                        onRefreshWeather = {},
+                        onToggleUnit = {},
+                        onOpenShortcutApp = { openedShortcutApp = true },
+                        onSelectShortcutApp = { selectedShortcut.value = it },
+                        onDismiss = {}
+                    )
+                }
+            }
+        }
+
+        // Clock area displays live temperature and opens the weather dialog when tapped
+        composeRule.onNodeWithTag("home_clock_weather_temp", useUnmergedTree = true)
+            .assertTextContains("68°F")
+        composeRule.onNodeWithTag("home_clock_weather_area").performClick()
+
+        // User chooses a weather app shortcut from the dialog
+        composeRule.onNodeWithTag("weather_choose_app_button").performScrollTo().performClick()
+        composeRule.onNodeWithTag("weather_app_option_com.accuweather.android").performClick()
+
+        // Once selected, the Open <App> shortcut button appears and invokes launch
+        composeRule.onNodeWithTag("weather_open_app_button")
+            .performScrollTo()
+            .assertTextContains("Open AccuWeather")
+            .performClick()
+
+        composeRule.runOnIdle {
+            assertEquals("com.accuweather.android", selectedShortcut.value?.packageName)
+            assertTrue(openedShortcutApp)
+        }
+    }
+
+    @Test
+    fun `HomeCalendarCard shows permission onboarding when calendar access is not granted`() {
+        var requestedPermission = false
+        var openedCalendarApp = false
+
+        composeRule.setContent {
+            NephoTheme {
+                HomeCalendarCard(
+                    scheduleState = CalendarScheduleState(hasPermission = false),
+                    onRequestCalendarPermission = { requestedPermission = true },
+                    onRefresh = {},
+                    onOpenEvent = {},
+                    onOpenCalendarApp = { openedCalendarApp = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("calendar_permission_prompt").assertIsDisplayed()
+        composeRule.onNodeWithTag("calendar_grant_permission_button").performClick()
+        composeRule.onNodeWithTag("calendar_open_app_button").performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(requestedPermission)
+            assertTrue(openedCalendarApp)
+        }
+    }
+
+    @Test
+    fun `HomeCalendarCard renders today tomorrow and next day events and opens tapped event`() {
+        var clickedEvent: CalendarEventItem? = null
+        var refreshed = false
+        var openedCalendarApp = false
+
+        val todayEvent = CalendarEventItem(
+            eventId = 101L,
+            title = "Design Review",
+            startMillis = 1_763_571_600_000L,
+            endMillis = 1_763_575_200_000L,
+            allDay = false,
+            location = "Room B"
+        )
+        val nextDayEvent = CalendarEventItem(
+            eventId = 202L,
+            title = "Weekend Hike",
+            startMillis = 1_763_740_800_000L,
+            endMillis = 1_763_827_200_000L,
+            allDay = true
+        )
+
+        val state = CalendarScheduleState(
+            hasPermission = true,
+            days = listOf(
+                CalendarDayGroup(0, "Today", "Thu, Nov 19", listOf(todayEvent)),
+                CalendarDayGroup(1, "Tomorrow", "Fri, Nov 20", emptyList()),
+                CalendarDayGroup(2, "Saturday", "Nov 21", listOf(nextDayEvent))
+            ),
+            totalEventCount = 2
+        )
+
+        composeRule.setContent {
+            NephoTheme {
+                HomeCalendarCard(
+                    scheduleState = state,
+                    onRequestCalendarPermission = {},
+                    onRefresh = { refreshed = true },
+                    onOpenEvent = { clickedEvent = it },
+                    onOpenCalendarApp = { openedCalendarApp = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("calendar_day_title_0", useUnmergedTree = true).assertTextContains("Today")
+        composeRule.onNodeWithTag("calendar_day_title_1", useUnmergedTree = true).assertTextContains("Tomorrow")
+        composeRule.onNodeWithTag("calendar_day_title_2", useUnmergedTree = true).assertTextContains("Saturday")
+        composeRule.onNodeWithTag("calendar_day_empty_1", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("calendar_event_title_101_0", useUnmergedTree = true)
+            .assertTextContains("Design Review")
+        composeRule.onNodeWithTag("calendar_event_title_202_2", useUnmergedTree = true)
+            .assertTextContains("Weekend Hike")
+
+        composeRule.onNodeWithTag("calendar_event_101_0").performClick()
+        composeRule.onNodeWithTag("calendar_refresh_button").performClick()
+        composeRule.onNodeWithTag("calendar_open_app_button").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(101L, clickedEvent?.eventId)
+            assertTrue(refreshed)
+            assertTrue(openedCalendarApp)
+        }
+    }
+
+    @Test
+    fun `HomeMusicCard lets user pick a connected music service and switch back to Auto`() {
+        val showPicker = mutableStateOf(false)
+        val selectedMusicApp = mutableStateOf<LauncherAppInfo?>(null)
+        var openedSelected = false
+
+        val spotify = LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S")
+        val ytMusic = LauncherAppInfo("com.google.android.apps.youtube.music", "Main", "YouTube Music", "Y")
+        val chrome = LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C")
+
+        composeRule.setContent {
+            NephoTheme {
+                HomeMusicCard(
+                    mediaState = MediaPlaybackState(isActive = false, hasSessionAccess = true),
+                    onTogglePlayPause = {},
+                    onSkipPrevious = {},
+                    onSkipNext = {},
+                    onOpenMusicApp = {},
+                    onGrantNotificationAccess = {},
+                    preferredMusicApp = selectedMusicApp.value,
+                    onChooseMusicService = { showPicker.value = true }
+                )
+                if (showPicker.value) {
+                    MusicServicePickerDialog(
+                        selectedApp = selectedMusicApp.value,
+                        installedApps = listOf(chrome, ytMusic, spotify),
+                        hasSessionAccess = true,
+                        onSelectService = { selectedMusicApp.value = it },
+                        onOpenSelectedService = { openedSelected = true },
+                        onGrantNotificationAccess = {},
+                        onDismiss = { showPicker.value = false }
+                    )
+                }
+            }
+        }
+
+        // Open service picker from the Music card and pick Spotify
+        composeRule.onNodeWithTag("music_choose_service_button").performClick()
+        composeRule.onNodeWithTag("music_service_picker_dialog").assertIsDisplayed()
+        composeRule.onNodeWithTag("music_service_option_com.spotify.music").performClick()
+
+        // Music card now reflects Spotify as the connected service
+        composeRule.onNodeWithTag("music_idle_title_text", useUnmergedTree = true)
+            .assertTextContains("Spotify")
+
+        // Reopen picker to verify Open Spotify button and switching back to Auto
+        composeRule.onNodeWithTag("music_choose_service_button").performClick()
+        composeRule.onNodeWithTag("music_service_open_selected_button")
+            .assertTextContains("Open Spotify")
+            .performClick()
+
+        composeRule.runOnIdle {
+            assertEquals("com.spotify.music", selectedMusicApp.value?.packageName)
+            assertTrue(openedSelected)
+        }
+    }
+
+    @Test
+    fun `homeScreenGestures handles double-tap screen off and swipe-left Google Search without blocking buttons`() {
+        var screenOffCount = 0
+        var googleSearchCount = 0
+        var buttonClicks = 0
+
+        composeRule.setContent {
+            NephoTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .homeScreenGestures(
+                            onDoubleTapScreenOff = { screenOffCount++ },
+                            onSwipeLeftGoogleSearch = { googleSearchCount++ }
+                        )
+                        .testTag("gesture_test_root")
+                ) {
+                    Button(
+                        onClick = { buttonClicks++ },
+                        modifier = Modifier
+                            .align(Alignment.BottomCenter)
+                            .testTag("gesture_child_button")
+                    ) {
+                        Text("Action")
+                    }
+                }
+            }
+        }
+
+        // Swiping right or up should NOT trigger Google Search
+        composeRule.onNodeWithTag("gesture_test_root").performTouchInput { swipeRight() }
+        composeRule.onNodeWithTag("gesture_test_root").performTouchInput { swipeUp() }
+        composeRule.runOnIdle {
+            assertEquals(0, googleSearchCount)
+        }
+
+        // Swiping left triggers Google Search
+        composeRule.onNodeWithTag("gesture_test_root").performTouchInput { swipeLeft() }
+        composeRule.runOnIdle {
+            assertEquals(1, googleSearchCount)
+        }
+
+        // Double-tapping a child button should click the button, NOT lock the screen
+        composeRule.onNodeWithTag("gesture_child_button").performTouchInput { doubleClick() }
+        composeRule.runOnIdle {
+            assertEquals(2, buttonClicks)
+            assertEquals(0, screenOffCount)
+        }
+
+        // Double-tapping the open home surface turns the screen off
+        composeRule.onNodeWithTag("gesture_test_root").performTouchInput {
+            doubleClick(position = center)
+        }
+        composeRule.runOnIdle {
+            assertEquals(1, screenOffCount)
+        }
+    }
 }
+
+
+

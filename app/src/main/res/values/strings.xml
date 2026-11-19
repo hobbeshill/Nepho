@@ -231,5 +231,78 @@
     <string name="dock_picker_title">Add to Shortcut Drawer</string>
     <string name="dock_picker_search">Filter apps…</string>
     <string name="dock_close">Close</string>
+
+    <!-- Clock Weather & Weather App Shortcut -->
+    <string name="weather_add_cta">Add Weather</string>
+    <string name="weather_tap_configure">Tap for weather &amp; app</string>
+    <string name="weather_dialog_title">Weather</string>
+    <string name="weather_shortcut_section">Weather App Shortcut</string>
+    <string name="weather_add_app_shortcut">Add Weather App Shortcut</string>
+    <string name="weather_change_app_shortcut">Change App</string>
+    <string name="weather_remove_app_shortcut">Remove</string>
+    <string name="weather_open_app">Open %1$s</string>
+    <string name="weather_picker_search">Search apps for weather shortcut…</string>
+    <string name="weather_location_section">Location</string>
+    <string name="weather_city_hint">City or ZIP (e.g. Seattle, London)</string>
+    <string name="weather_search_action">Search</string>
+    <string name="weather_use_my_location">Use My Location</string>
+    <string name="weather_refresh">Refresh</string>
+    <string name="weather_loading">Updating weather…</string>
+    <string name="weather_high_low">H:%1$d° L:%2$d°</string>
+    <string name="weather_location_unavailable">Could not get device location. Search for a city instead.</string>
+    <string name="weather_location_denied">Location permission denied. You can search for any city instead.</string>
+    <string name="weather_fetch_failed">Couldn’t refresh weather right now. Check your connection.</string>
+    <string name="weather_city_not_found">No matching cities found for “%1$s”.</string>
+    <string name="weather_shortcut_saved">Weather shortcut set to %1$s.</string>
+    <string name="weather_shortcut_cleared">Weather app shortcut removed.</string>
+
+    <!-- Google Calendar 3-Day Schedule -->
+    <string name="calendar_card_title">Google Calendar</string>
+    <string name="calendar_window_subtitle">Today • Tomorrow • Next Day</string>
+    <string name="calendar_day_today">Today</string>
+    <string name="calendar_day_tomorrow">Tomorrow</string>
+    <string name="calendar_all_day">All day</string>
+    <string name="calendar_nothing_scheduled">Clear schedule</string>
+    <string name="calendar_no_events_3days">Nothing scheduled for the next 3 days.</string>
+    <string name="calendar_permission_title">Connect Google Calendar</string>
+    <string name="calendar_permission_body">Allow calendar access to show everything scheduled for today, tomorrow, and the next day right on your home screen.</string>
+    <string name="calendar_grant_access">Allow Calendar</string>
+    <string name="calendar_permission_denied">Calendar access denied. Grant Calendar permission in settings to show your schedule.</string>
+    <string name="calendar_open_app">Open Calendar</string>
+    <string name="calendar_refresh">Refresh schedule</string>
+    <string name="calendar_app_unavailable">Couldn’t find Google Calendar or a calendar app on this device.</string>
+    <string name="dock_jump_calendar">Calendar</string>
+
+    <!-- Music Service Connection Picker -->
+    <string name="music_service_dialog_title">Music Service</string>
+    <string name="music_service_dialog_subtitle">Choose which music app connects to Nepho’s player controls and quick launch.</string>
+    <string name="music_service_choose">Service</string>
+    <string name="music_service_choose_desc">Choose music service</string>
+    <string name="music_service_auto_title">Auto (Any Active Player)</string>
+    <string name="music_service_auto_subtitle">Automatically connects to whichever music or media app is playing.</string>
+    <string name="music_service_connected_subtitle">Connected to %1$s • Tap to open</string>
+    <string name="music_service_connected_need_access">Connected to %1$s • Enable access for live controls</string>
+    <string name="music_service_connected_badge">Connected</string>
+    <string name="music_service_detected_badge">Music</string>
+    <string name="music_service_search_hint">Search music or audio apps…</string>
+    <string name="music_service_open_selected">Open %1$s</string>
+    <string name="music_service_use_auto">Use Auto</string>
+    <string name="music_service_saved">Connected music service: %1$s.</string>
+    <string name="music_service_reset_auto">Music service set to Auto (any active player).</string>
+    <string name="music_service_access_hint">Grant Notification Access so Nepho can show live tracks and control %1$s.</string>
+    <string name="music_service_no_apps">No matching apps found.</string>
+
+    <!-- Home Gestures: Double-Tap Screen Off & Swipe-Left Google Search -->
+    <string name="screen_lock_admin_label">Nepho Screen Lock</string>
+    <string name="screen_lock_admin_description">Allows Nepho to turn the screen off when you double-tap the home screen.</string>
+    <string name="screen_lock_admin_explanation">Enable so double-tapping Nepho’s home screen turns your screen off immediately. Nepho only uses lock-screen access.</string>
+    <string name="screen_lock_enabled_toast">Double-tap screen off is now enabled.</string>
+    <string name="screen_lock_activation_canceled">Enable Screen Lock to turn the screen off with a double-tap.</string>
+    <string name="screen_lock_unavailable">Screen lock is not available on this device.</string>
+    <string name="action_enable_double_tap_lock">Enable Double-Tap Screen Off</string>
+    <string name="action_double_tap_lock_active">Double-Tap Screen Off (Active)</string>
+    <string name="google_search_unavailable">Couldn’t open Google Search on this device.</string>
 </resources>
+
+
 

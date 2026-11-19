@@ -29,11 +29,18 @@ import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
 import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.PulseDatabase
+import com.example.launcher.CalendarEventItem
+import com.example.launcher.CalendarScheduleProvider
+import com.example.launcher.CalendarScheduleState
 import com.example.launcher.ClockAlarmHelper
+import com.example.launcher.HomeGestureActions
 import com.example.launcher.LauncherAppCatalog
 import com.example.launcher.LauncherAppInfo
 import com.example.launcher.MediaPlaybackController
 import com.example.launcher.MediaPlaybackState
+import com.example.launcher.WeatherLocationOption
+import com.example.launcher.WeatherService
+import com.example.launcher.WeatherUiState
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
 import com.example.updates.GitHubReleaseUpdater
@@ -111,6 +118,18 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     private val _installedApps = MutableStateFlow<List<LauncherAppInfo>>(emptyList())
     val installedApps: StateFlow<List<LauncherAppInfo>> = _installedApps.asStateFlow()
 
+    val preferredMusicPackage: StateFlow<String?> =
+        repository.sessionPreferences.preferredMusicPackageFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val preferredMusicApp: StateFlow<LauncherAppInfo?> = combine(
+        preferredMusicPackage,
+        _installedApps
+    ) { pkg, installed ->
+        if (pkg.isNullOrBlank()) null
+        else installed.firstOrNull { it.packageName == pkg }
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
     private val _appSearchQuery = MutableStateFlow("")
     val appSearchQuery: StateFlow<String> = _appSearchQuery.asStateFlow()
 
@@ -137,8 +156,54 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     private val _isDefaultHome = MutableStateFlow(LauncherAppCatalog.isDefaultHomeApp(application))
     val isDefaultHome: StateFlow<Boolean> = _isDefaultHome.asStateFlow()
 
+    private val _isScreenLockEnabled = MutableStateFlow(HomeGestureActions.isScreenLockEnabled(application))
+    val isScreenLockEnabled: StateFlow<Boolean> = _isScreenLockEnabled.asStateFlow()
+
+    private val _homePressedEvents = MutableSharedFlow<Unit>(extraBufferCapacity = 4)
+    val homePressedEvents: SharedFlow<Unit> = _homePressedEvents.asSharedFlow()
+
     private val _nextAlarmSummary = MutableStateFlow(ClockAlarmHelper.readNextAlarmSummary(application))
     val nextAlarmSummary: StateFlow<String?> = _nextAlarmSummary.asStateFlow()
+
+    // Google Calendar 3-day schedule state
+    private val _calendarScheduleState = MutableStateFlow(
+        CalendarScheduleState(
+            hasPermission = CalendarScheduleProvider.hasCalendarPermission(application)
+        )
+    )
+    val calendarScheduleState: StateFlow<CalendarScheduleState> = _calendarScheduleState.asStateFlow()
+
+    // Weather & Weather App Shortcut state
+    private val _isWeatherLoading = MutableStateFlow(false)
+    private val _weatherCityResults = MutableStateFlow<List<WeatherLocationOption>>(emptyList())
+    val weatherCityResults: StateFlow<List<WeatherLocationOption>> = _weatherCityResults.asStateFlow()
+
+    private val _isSearchingWeatherCities = MutableStateFlow(false)
+    val isSearchingWeatherCities: StateFlow<Boolean> = _isSearchingWeatherCities.asStateFlow()
+
+    val weatherUiState: StateFlow<WeatherUiState> = combine(
+        repository.sessionPreferences.weatherPrefsFlow,
+        _installedApps,
+        _isWeatherLoading
+    ) { prefs, installed, loading ->
+        val shortcutApp = prefs.shortcutPackage?.let { pkg ->
+            installed.firstOrNull { it.packageName == pkg }
+        }
+        WeatherUiState(
+            locationName = prefs.locationName,
+            latitude = prefs.latitude,
+            longitude = prefs.longitude,
+            tempC = prefs.cachedTempC,
+            highC = prefs.cachedHighC,
+            lowC = prefs.cachedLowC,
+            weatherCode = prefs.cachedWeatherCode,
+            isDay = prefs.cachedIsDay,
+            useFahrenheit = prefs.useFahrenheit,
+            shortcutApp = shortcutApp,
+            isLoading = loading,
+            updatedAt = prefs.cachedUpdatedAt
+        )
+    }.stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), WeatherUiState())
 
     private var packageReceiverRegistered = false
     private val packageChangeReceiver = object : BroadcastReceiver() {
@@ -336,6 +401,11 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         registerPackageChangeReceiver(application)
         refreshLauncherState()
         viewModelScope.launch {
+            repository.sessionPreferences.preferredMusicPackageFlow.collect { pkg ->
+                mediaController.setPreferredPackage(pkg)
+            }
+        }
+        viewModelScope.launch {
             repository.initializeSession()
             val settings = digestDao.getDigestSettings()
             if (settings?.enabled == true) {
@@ -386,12 +456,201 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
+    fun onHomeButtonPressed() {
+        _appSearchQuery.value = ""
+        _homePressedEvents.tryEmit(Unit)
+    }
+
     fun refreshLauncherState() {
         val ctx = getApplication<Application>()
         _isDefaultHome.value = LauncherAppCatalog.isDefaultHomeApp(ctx)
+        _isScreenLockEnabled.value = HomeGestureActions.isScreenLockEnabled(ctx)
         _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(ctx)
         mediaController.refresh()
         refreshInstalledApps()
+        refreshWeatherIfStale()
+        refreshCalendarSchedule()
+    }
+
+    fun openGoogleSearch() {
+        val ctx = getApplication<Application>()
+        if (!HomeGestureActions.openGoogleSearch(ctx)) {
+            emitSnackbar(ctx.getString(R.string.google_search_unavailable))
+        }
+    }
+
+    fun onScreenLockAdminResult(enabled: Boolean) {
+        val ctx = getApplication<Application>()
+        _isScreenLockEnabled.value = enabled
+        emitSnackbar(
+            ctx.getString(
+                if (enabled) R.string.screen_lock_enabled_toast
+                else R.string.screen_lock_activation_canceled
+            )
+        )
+    }
+
+    fun notifyScreenLockUnavailable() {
+        emitSnackbar(getApplication<Application>().getString(R.string.screen_lock_unavailable))
+    }
+
+    fun refreshCalendarSchedule() {
+        val ctx = getApplication<Application>()
+        if (!CalendarScheduleProvider.hasCalendarPermission(ctx)) {
+            _calendarScheduleState.value = CalendarScheduleState(hasPermission = false)
+            return
+        }
+        viewModelScope.launch {
+            _calendarScheduleState.value = _calendarScheduleState.value.copy(
+                hasPermission = true,
+                isLoading = true
+            )
+            val loaded = withContext(Dispatchers.IO) {
+                CalendarScheduleProvider.loadThreeDaySchedule(ctx)
+            }
+            _calendarScheduleState.value = loaded
+        }
+    }
+
+    fun openCalendarEvent(event: CalendarEventItem) {
+        val ctx = getApplication<Application>()
+        if (!CalendarScheduleProvider.openEventInCalendar(ctx, event)) {
+            emitSnackbar(ctx.getString(R.string.calendar_app_unavailable))
+        }
+    }
+
+    fun openGoogleCalendar() {
+        val ctx = getApplication<Application>()
+        if (!CalendarScheduleProvider.openGoogleCalendarApp(ctx)) {
+            emitSnackbar(ctx.getString(R.string.calendar_app_unavailable))
+        }
+    }
+
+    fun notifyCalendarPermissionDenied() {
+        _calendarScheduleState.value = CalendarScheduleState(hasPermission = false)
+        emitSnackbar(getApplication<Application>().getString(R.string.calendar_permission_denied))
+    }
+
+    private fun refreshWeatherIfStale() {
+        viewModelScope.launch {
+            val prefs = repository.sessionPreferences.weatherPrefsFlow.first()
+            val lat = prefs.latitude ?: return@launch
+            val lon = prefs.longitude ?: return@launch
+            val ageMs = System.currentTimeMillis() - prefs.cachedUpdatedAt
+            if (prefs.cachedTempC == null || ageMs > WEATHER_STALE_MS) {
+                fetchAndSaveWeather(lat, lon, showErrorSnackbar = false)
+            }
+        }
+    }
+
+    fun refreshWeather() {
+        viewModelScope.launch {
+            val prefs = repository.sessionPreferences.weatherPrefsFlow.first()
+            val lat = prefs.latitude
+            val lon = prefs.longitude
+            if (lat == null || lon == null) return@launch
+            fetchAndSaveWeather(lat, lon, showErrorSnackbar = true)
+        }
+    }
+
+    fun searchWeatherCities(query: String) {
+        val trimmed = query.trim()
+        if (trimmed.isEmpty()) {
+            _weatherCityResults.value = emptyList()
+            return
+        }
+        viewModelScope.launch {
+            _isSearchingWeatherCities.value = true
+            val results = WeatherService.searchCities(trimmed)
+            _weatherCityResults.value = results
+            _isSearchingWeatherCities.value = false
+            if (results.isEmpty()) {
+                emitSnackbar(
+                    getApplication<Application>().getString(R.string.weather_city_not_found, trimmed)
+                )
+            }
+        }
+    }
+
+    fun selectWeatherLocation(option: WeatherLocationOption) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setWeatherLocation(
+                name = option.displayName,
+                latitude = option.latitude,
+                longitude = option.longitude
+            )
+            _weatherCityResults.value = emptyList()
+            fetchAndSaveWeather(option.latitude, option.longitude, showErrorSnackbar = true)
+        }
+    }
+
+    fun useCurrentLocationForWeather() {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            _isWeatherLoading.value = true
+            val location = WeatherService.getDeviceCoarseLocation(ctx)
+            if (location == null) {
+                _isWeatherLoading.value = false
+                emitSnackbar(ctx.getString(R.string.weather_location_unavailable))
+                return@launch
+            }
+            repository.sessionPreferences.setWeatherLocation(
+                name = location.displayName,
+                latitude = location.latitude,
+                longitude = location.longitude
+            )
+            _weatherCityResults.value = emptyList()
+            fetchAndSaveWeather(location.latitude, location.longitude, showErrorSnackbar = true)
+        }
+    }
+
+    fun notifyLocationPermissionDenied() {
+        emitSnackbar(getApplication<Application>().getString(R.string.weather_location_denied))
+    }
+
+    fun toggleWeatherTemperatureUnit() {
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.weatherPrefsFlow.first().useFahrenheit
+            repository.sessionPreferences.setWeatherUseFahrenheit(!current)
+        }
+    }
+
+    fun setWeatherAppShortcut(app: LauncherAppInfo?) {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            repository.sessionPreferences.setWeatherShortcutPackage(app?.packageName)
+            if (app != null) {
+                emitSnackbar(ctx.getString(R.string.weather_shortcut_saved, app.label))
+            } else {
+                emitSnackbar(ctx.getString(R.string.weather_shortcut_cleared))
+            }
+        }
+    }
+
+    fun openWeatherAppShortcut() {
+        val app = weatherUiState.value.shortcutApp ?: return
+        launchInstalledApp(app)
+    }
+
+    private suspend fun fetchAndSaveWeather(
+        latitude: Double,
+        longitude: Double,
+        showErrorSnackbar: Boolean
+    ) {
+        _isWeatherLoading.value = true
+        val forecast = WeatherService.fetchForecast(latitude, longitude)
+        _isWeatherLoading.value = false
+        if (forecast != null) {
+            repository.sessionPreferences.saveWeatherSnapshot(
+                tempC = forecast.tempC,
+                highC = forecast.highC,
+                lowC = forecast.lowC,
+                weatherCode = forecast.weatherCode,
+                isDay = forecast.isDay
+            )
+        } else if (showErrorSnackbar) {
+            emitSnackbar(getApplication<Application>().getString(R.string.weather_fetch_failed))
+        }
     }
 
     private fun refreshInstalledApps() {
@@ -506,10 +765,37 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         mediaController.skipPrevious()
     }
 
+    fun setPreferredMusicService(app: LauncherAppInfo?) {
+        val ctx = getApplication<Application>()
+        viewModelScope.launch {
+            repository.sessionPreferences.setPreferredMusicPackage(app?.packageName)
+            mediaController.setPreferredPackage(app?.packageName)
+            if (app != null) {
+                emitSnackbar(ctx.getString(R.string.music_service_saved, app.label))
+            } else {
+                emitSnackbar(ctx.getString(R.string.music_service_reset_auto))
+            }
+        }
+    }
+
+    fun openPreferredMusicService() {
+        val app = preferredMusicApp.value
+        if (app != null) {
+            launchInstalledApp(app)
+        } else {
+            openMusicApp()
+        }
+    }
+
     fun openMusicApp() {
         val ctx = getApplication<Application>()
         val fallbackPkg = LauncherAppCatalog.findDefaultMusicPackage(ctx, _installedApps.value)
-        if (!mediaController.openActiveMediaApp(ctx, fallbackPkg)) {
+        if (!mediaController.openActiveMediaApp(
+                context = ctx,
+                preferredMusicPackage = preferredMusicPackage.value,
+                fallbackMusicPackage = fallbackPkg
+            )
+        ) {
             emitSnackbar(ctx.getString(R.string.music_app_unavailable))
         }
     }
@@ -1047,5 +1333,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     companion object {
         private const val TAG = "PulseViewModel"
+        private const val WEATHER_STALE_MS = 20 * 60 * 1000L
     }
 }

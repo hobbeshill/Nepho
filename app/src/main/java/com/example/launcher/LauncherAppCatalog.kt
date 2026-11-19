@@ -73,16 +73,45 @@ object LauncherAppCatalog {
 
     private val knownMusicPackages: List<String> = listOf(
         "com.spotify.music",
+        "com.spotify.lite",
         "com.google.android.apps.youtube.music",
         "com.apple.android.music",
         "com.amazon.mp3",
         "com.pandora.android",
         "com.soundcloud.android",
         "com.aspiro.tidal",
+        "deezer.android.app",
+        "com.qobuz.music",
+        "com.audible.application",
+        "au.com.shiftyjelly.pocketcasts",
+        "com.clearchannel.iheartradio.controller",
+        "com.sirius",
         "com.sec.android.app.music",
         "com.maxmpz.audioplayer",
+        "in.krosbits.musicolet",
+        "tv.plex.labs.plexamp",
         "org.videolan.vlc",
         "com.google.android.youtube"
+    )
+
+    private val musicKeywords: List<String> = listOf(
+        "music",
+        "spotify",
+        "pandora",
+        "soundcloud",
+        "tidal",
+        "deezer",
+        "qobuz",
+        "podcast",
+        "audio",
+        "radio",
+        "audible",
+        "bandcamp",
+        "plexamp",
+        "poweramp",
+        "vlc",
+        "sirius",
+        "iheart"
     )
 
     fun loadLaunchableApps(context: Context): List<LauncherAppInfo> {
@@ -217,6 +246,30 @@ object LauncherAppCatalog {
 
         val installedSet = installedApps.map { it.packageName }.toSet()
         return knownMusicPackages.firstOrNull { it in installedSet }
+    }
+
+    fun isKnownMusicApp(app: LauncherAppInfo): Boolean {
+        if (app.packageName in knownMusicPackages) return true
+        val lowerLabel = app.label.lowercase(Locale.getDefault())
+        val lowerPkg = app.packageName.lowercase(Locale.getDefault())
+        return musicKeywords.any { kw -> lowerLabel.contains(kw) || lowerPkg.contains(kw) }
+    }
+
+    fun prioritizeMusicApps(installedApps: List<LauncherAppInfo>): List<LauncherAppInfo> {
+        val knownRank = knownMusicPackages.withIndex().associate { (index, pkg) -> pkg to index }
+        return installedApps.sortedWith(
+            compareBy<LauncherAppInfo>(
+                { app ->
+                    when {
+                        app.packageName in knownRank -> 0
+                        isKnownMusicApp(app) -> 1
+                        else -> 2
+                    }
+                },
+                { app -> knownRank[app.packageName] ?: Int.MAX_VALUE },
+                { app -> app.label.lowercase(Locale.getDefault()) }
+            )
+        )
     }
 
     fun loadAppIconBitmap(context: Context, packageName: String, sizePx: Int = 96): ImageBitmap? {

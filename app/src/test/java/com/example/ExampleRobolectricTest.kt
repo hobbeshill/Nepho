@@ -37,6 +37,8 @@ import android.provider.AlarmClock
 import com.example.launcher.ClockAlarmHelper
 import com.example.launcher.LauncherAppCatalog
 import com.example.launcher.LauncherAppInfo
+import com.example.launcher.WeatherConditionKind
+import com.example.launcher.WeatherService
 import com.example.notifications.NephoNotificationListener
 import com.example.ui.PulseTab
 import com.example.ui.PulseViewModel
@@ -1592,6 +1594,291 @@ class ExampleRobolectricTest {
         )
         assertTrue(prefs.shortcutsCustomizedFlow.first())
     }
+
+    @Test
+    fun `WeatherService parses Open-Meteo geocoding, forecast, prioritizes weather apps, and persists shortcut`() = runTest {
+        val geocodingJson = """
+            {
+              "results": [
+                { "name": "Seattle", "admin1": "Washington", "country_code": "US", "latitude": 47.6062, "longitude": -122.3321 }
+              ]
+            }
+        """.trimIndent()
+        val cities = WeatherService.parseGeocodingJson(geocodingJson)
+        assertEquals(1, cities.size)
+        assertEquals("Seattle, Washington, US", cities.first().displayName)
+        assertEquals(47.6062, cities.first().latitude, 0.001)
+
+        val forecastJson = """
+            {
+              "current": { "temperature_2m": 20.0, "weather_code": 61, "is_day": 1 },
+              "daily": { "temperature_2m_max": [23.0], "temperature_2m_min": [14.0] }
+            }
+        """.trimIndent()
+        val forecast = WeatherService.parseForecastJson(forecastJson)
+        assertNotNull(forecast)
+        assertEquals(68, WeatherService.convertTemp(forecast!!.tempC, useFahrenheit = true))
+        assertEquals(20, WeatherService.convertTemp(forecast.tempC, useFahrenheit = false))
+        assertEquals("Rain", WeatherService.describeWeatherCode(forecast.weatherCode))
+        assertEquals(WeatherConditionKind.RAIN, WeatherService.mapConditionKind(forecast.weatherCode, true))
+
+        val prioritized = WeatherService.prioritizeWeatherApps(
+            listOf(
+                LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C"),
+                LauncherAppInfo("com.accuweather.android", "Main", "AccuWeather", "A"),
+                LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S")
+            )
+        )
+        assertEquals("com.accuweather.android", prioritized.first().packageName)
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = PulseRepository.getInstance(context).sessionPreferences
+        prefs.setWeatherLocation("Seattle, WA", 47.6062, -122.3321)
+        prefs.setWeatherShortcutPackage("com.accuweather.android")
+        prefs.saveWeatherSnapshot(tempC = 20.0, highC = 23.0, lowC = 14.0, weatherCode = 61, isDay = true)
+
+        val saved = prefs.weatherPrefsFlow.first()
+        assertEquals("Seattle, WA", saved.locationName)
+        assertEquals("com.accuweather.android", saved.shortcutPackage)
+        assertEquals(20.0, saved.cachedTempC!!, 0.001)
+    }
+
+    @Test
+    fun `home button press clears app drawer search and emits return-to-top event`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = PulseViewModel(context)
+        vm.updateAppSearchQuery("spot")
+        assertEquals("spot", vm.appSearchQuery.value)
+
+        val homeEvent = async(start = CoroutineStart.UNDISPATCHED) {
+            vm.homePressedEvents.first()
+        }
+
+        vm.onHomeButtonPressed()
+        withTimeout(2_000) { homeEvent.await() }
+        assertEquals("", vm.appSearchQuery.value)
+    }
+
+    @Test
+    fun `CalendarScheduleProvider groups today tomorrow and next day with UTC all-day safety and multi-day spans`() {
+        val laTz = java.util.TimeZone.getTimeZone("America/Los_Angeles")
+        val utcTz = java.util.TimeZone.getTimeZone("UTC")
+
+        // Reference local time: Thursday, Nov 19, 2026 at 09:00 PST
+        val nowLocal = java.util.Calendar.getInstance(laTz).apply {
+            clear()
+            set(2026, java.util.Calendar.NOVEMBER, 19, 9, 0, 0)
+        }.timeInMillis
+
+        fun localTime(day: Int, hour: Int, minute: Int = 0): Long {
+            return java.util.Calendar.getInstance(laTz).apply {
+                clear()
+                set(2026, java.util.Calendar.NOVEMBER, day, hour, minute, 0)
+            }.timeInMillis
+        }
+
+        fun utcMidnight(day: Int): Long {
+            return java.util.Calendar.getInstance(utcTz).apply {
+                clear()
+                set(2026, java.util.Calendar.NOVEMBER, day, 0, 0, 0)
+            }.timeInMillis
+        }
+
+        val events = listOf(
+            // Timed event Today 10:00–11:00
+            com.example.launcher.CalendarEventItem(
+                eventId = 1L,
+                title = "Standup Sync",
+                startMillis = localTime(19, 10),
+                endMillis = localTime(19, 11),
+                allDay = false,
+                location = "Meet"
+            ),
+            // UTC midnight all-day event Today (Nov 19 UTC -> Nov 20 UTC)
+            com.example.launcher.CalendarEventItem(
+                eventId = 2L,
+                title = "Product Launch Day",
+                startMillis = utcMidnight(19),
+                endMillis = utcMidnight(20),
+                allDay = true
+            ),
+            // Multi-day timed event spanning Today 22:00 to Tomorrow 02:00
+            com.example.launcher.CalendarEventItem(
+                eventId = 3L,
+                title = "Overnight Maintenance",
+                startMillis = localTime(19, 22),
+                endMillis = localTime(20, 2),
+                allDay = false
+            ),
+            // Next Day (Saturday Nov 21) timed event
+            com.example.launcher.CalendarEventItem(
+                eventId = 4L,
+                title = "Soccer Match",
+                startMillis = localTime(21, 14),
+                endMillis = localTime(21, 16),
+                allDay = false
+            ),
+            // Day + 3 (Sunday Nov 22) should be excluded
+            com.example.launcher.CalendarEventItem(
+                eventId = 5L,
+                title = "Too Far Ahead",
+                startMillis = localTime(22, 10),
+                endMillis = localTime(22, 11),
+                allDay = false
+            )
+        )
+
+        val groups = com.example.launcher.CalendarScheduleProvider.groupEventsIntoThreeDays(
+            events = events,
+            nowMillis = nowLocal,
+            timeZone = laTz,
+            locale = java.util.Locale.US
+        )
+
+        assertEquals(3, groups.size)
+        assertEquals("Today", groups[0].dayTitle)
+        assertEquals("Tomorrow", groups[1].dayTitle)
+        assertEquals("Saturday", groups[2].dayTitle)
+
+        // Today: All-day event sorted first, then 10:00 Standup, then 22:00 Overnight Maintenance
+        assertEquals(listOf(2L, 1L, 3L), groups[0].events.map { it.eventId })
+        // Tomorrow: Overnight Maintenance carries over; all-day Nov 19 does NOT leak into Tomorrow
+        assertEquals(listOf(3L), groups[1].events.map { it.eventId })
+        // Next Day: Soccer Match only (Day + 3 excluded)
+        assertEquals(listOf(4L), groups[2].events.map { it.eventId })
+
+        assertEquals(
+            "All day",
+            com.example.launcher.CalendarScheduleProvider.formatEventTimeRange(
+                event = events[1],
+                is24Hour = false,
+                allDayLabel = "All day",
+                timeZone = laTz,
+                locale = java.util.Locale.US
+            )
+        )
+        assertEquals(
+            "10:00 AM – 11:00 AM",
+            com.example.launcher.CalendarScheduleProvider.formatEventTimeRange(
+                event = events[0],
+                is24Hour = false,
+                allDayLabel = "All day",
+                timeZone = laTz,
+                locale = java.util.Locale.US
+            )
+        )
+    }
+
+    @Test
+    fun `preferred music service prioritizes music apps, binds preferred MediaSession, and persists in DataStore`() = runTest {
+        val sampleApps = listOf(
+            LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C"),
+            LauncherAppInfo("com.apple.android.music", "Main", "Apple Music", "A"),
+            LauncherAppInfo("com.custom.radio.fm", "Main", "Indie Radio", "I"),
+            LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S"),
+            LauncherAppInfo("com.google.android.apps.maps", "Main", "Maps", "M")
+        )
+
+        val prioritized = LauncherAppCatalog.prioritizeMusicApps(sampleApps)
+        assertEquals(
+            listOf(
+                "com.spotify.music",
+                "com.apple.android.music",
+                "com.custom.radio.fm",
+                "com.android.chrome",
+                "com.google.android.apps.maps"
+            ),
+            prioritized.map { it.packageName }
+        )
+        assertTrue(LauncherAppCatalog.isKnownMusicApp(sampleApps[1]))
+        assertTrue(LauncherAppCatalog.isKnownMusicApp(sampleApps[2]))
+        assertFalse(LauncherAppCatalog.isKnownMusicApp(sampleApps[0]))
+
+        val candidates = listOf(
+            com.example.launcher.MediaSessionCandidate(
+                packageName = "com.google.android.youtube",
+                isPlaying = true,
+                hasTitle = true
+            ),
+            com.example.launcher.MediaSessionCandidate(
+                packageName = "com.spotify.music",
+                isPlaying = false,
+                hasTitle = true
+            )
+        )
+        // Auto mode selects the actively playing session
+        assertEquals(
+            0,
+            com.example.launcher.MediaPlaybackController.selectBestControllerIndex(candidates, null)
+        )
+        // Explicit preference for Spotify prioritizes Spotify's active session
+        assertEquals(
+            1,
+            com.example.launcher.MediaPlaybackController.selectBestControllerIndex(
+                candidates,
+                "com.spotify.music"
+            )
+        )
+        // When preferred service has no session, falls back to actively playing session
+        assertEquals(
+            0,
+            com.example.launcher.MediaPlaybackController.selectBestControllerIndex(
+                candidates,
+                "com.apple.android.music"
+            )
+        )
+
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val prefs = PulseRepository.getInstance(context).sessionPreferences
+        prefs.setPreferredMusicPackage("com.spotify.music")
+        assertEquals("com.spotify.music", prefs.preferredMusicPackageFlow.first())
+        prefs.setPreferredMusicPackage(null)
+        assertEquals(null, prefs.preferredMusicPackageFlow.first())
+    }
+
+    @Test
+    fun `HomeGestureActions validates swipe-left geometry, screen lock activation intent, and Google Search fallback chain`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+
+        // Swipe-left geometry checks
+        assertTrue(com.example.launcher.HomeGestureActions.isHorizontalSwipeLeft(-140f, 12f, 72f))
+        assertFalse(com.example.launcher.HomeGestureActions.isHorizontalSwipeLeft(140f, 0f, 72f)) // swipe right
+        assertFalse(com.example.launcher.HomeGestureActions.isHorizontalSwipeLeft(-40f, 0f, 72f)) // too short
+        assertFalse(com.example.launcher.HomeGestureActions.isHorizontalSwipeLeft(-90f, 85f, 72f)) // too vertical
+        assertFalse(com.example.launcher.HomeGestureActions.isHorizontalSwipeLeft(-20f, -180f, 72f)) // vertical scroll
+
+        // Device admin screen-off state & intent
+        assertFalse(com.example.launcher.HomeGestureActions.isScreenLockEnabled(context))
+        assertEquals(
+            com.example.launcher.ScreenLockResult.NEEDS_ADMIN_ACTIVATION,
+            com.example.launcher.HomeGestureActions.turnScreenOff(context)
+        )
+        val adminIntent = com.example.launcher.HomeGestureActions.buildActivateScreenLockIntent(context)
+        assertEquals(android.app.admin.DevicePolicyManager.ACTION_ADD_DEVICE_ADMIN, adminIntent.action)
+        assertEquals(
+            com.example.launcher.HomeGestureActions.adminComponent(context),
+            @Suppress("DEPRECATION")
+            adminIntent.getParcelableExtra<android.content.ComponentName>(
+                android.app.admin.DevicePolicyManager.EXTRA_DEVICE_ADMIN
+            )
+        )
+        assertTrue(
+            adminIntent.getStringExtra(android.app.admin.DevicePolicyManager.EXTRA_ADD_EXPLANATION)
+                .orEmpty()
+                .isNotBlank()
+        )
+
+        // Google Search fallback intent chain
+        val searchIntents = com.example.launcher.HomeGestureActions.buildGoogleSearchIntents(context)
+        assertTrue(searchIntents.size >= 4)
+        assertEquals(android.app.SearchManager.INTENT_ACTION_GLOBAL_SEARCH, searchIntents.first().action)
+        assertEquals("com.google.android.googlequicksearchbox", searchIntents.first().`package`)
+        assertEquals(Intent.ACTION_VIEW, searchIntents.last().action)
+        assertEquals("https://www.google.com", searchIntents.last().data.toString())
+    }
 }
+
+
+
 
 

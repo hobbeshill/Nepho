@@ -32,12 +32,14 @@ import androidx.compose.material.icons.filled.DynamicFeed
 import androidx.compose.material.icons.filled.EditNote
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
+import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Home
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.Lock
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
 import androidx.compose.material.icons.outlined.Widgets
@@ -106,7 +108,11 @@ import java.util.Locale
 fun NephoApp(
     viewModel: PulseViewModel,
     onRequestNotificationPermission: () -> Unit,
-    onOpenNotificationAccessSettings: () -> Unit
+    onOpenNotificationAccessSettings: () -> Unit,
+    onRequestWeatherLocation: () -> Unit = {},
+    onRequestCalendarPermission: () -> Unit = {},
+    onDoubleTapScreenOff: () -> Unit = {},
+    onEnableScreenLockAdmin: () -> Unit = {}
 ) {
     val selectedTab by viewModel.selectedTab.collectAsStateWithLifecycle()
     val sessionOpenedAt by viewModel.sessionOpenedAt.collectAsStateWithLifecycle()
@@ -143,6 +149,12 @@ fun NephoApp(
     val pinnedShortcutApps by viewModel.pinnedShortcutApps.collectAsStateWithLifecycle()
     val pinnedShortcutPackages by viewModel.pinnedShortcutPackages.collectAsStateWithLifecycle()
     val isDefaultHome by viewModel.isDefaultHome.collectAsStateWithLifecycle()
+    val isScreenLockEnabled by viewModel.isScreenLockEnabled.collectAsStateWithLifecycle()
+    val weatherUiState by viewModel.weatherUiState.collectAsStateWithLifecycle()
+    val weatherCityResults by viewModel.weatherCityResults.collectAsStateWithLifecycle()
+    val isSearchingWeatherCities by viewModel.isSearchingWeatherCities.collectAsStateWithLifecycle()
+    val calendarScheduleState by viewModel.calendarScheduleState.collectAsStateWithLifecycle()
+    val preferredMusicApp by viewModel.preferredMusicApp.collectAsStateWithLifecycle()
 
     val pinnedPackageSet = remember(pinnedShortcutPackages) { pinnedShortcutPackages.toSet() }
 
@@ -161,6 +173,8 @@ fun NephoApp(
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
     var showQuickAlarmDialog by rememberSaveable { mutableStateOf(false) }
+    var showWeatherDialog by rememberSaveable { mutableStateOf(false) }
+    var showMusicServiceDialog by rememberSaveable { mutableStateOf(false) }
     var showShortcutDrawer by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
@@ -204,9 +218,31 @@ fun NephoApp(
         }
     }
 
+    LaunchedEffect(Unit) {
+        viewModel.homePressedEvents.collect {
+            showShortcutDrawer = false
+            showQuickAlarmDialog = false
+            showWeatherDialog = false
+            showMusicServiceDialog = false
+            showComposeDialog = false
+            showShadePrefsDialog = false
+            showDigestDialog = false
+            showDiagnosticsDialog = false
+            showUpdatesDialog = false
+            menuExpanded = false
+            reminderTargetItem = null
+            threadTargetId = null
+            launch { portraitListState.animateScrollToItem(0) }
+            launch { landscapeLeftListState.animateScrollToItem(0) }
+            launch { landscapeRightListState.animateScrollToItem(0) }
+        }
+    }
+
     // Back gesture behavior for Home replacement & overlays
     val shouldInterceptBack = showShortcutDrawer ||
         showQuickAlarmDialog ||
+        showWeatherDialog ||
+        showMusicServiceDialog ||
         appSearchQuery.isNotEmpty() ||
         isDefaultHome
 
@@ -214,6 +250,8 @@ fun NephoApp(
         when {
             showShortcutDrawer -> showShortcutDrawer = false
             showQuickAlarmDialog -> showQuickAlarmDialog = false
+            showWeatherDialog -> showWeatherDialog = false
+            showMusicServiceDialog -> showMusicServiceDialog = false
             appSearchQuery.isNotEmpty() -> viewModel.updateAppSearchQuery("")
             else -> {
                 coroutineScope.launch {
@@ -230,6 +268,35 @@ fun NephoApp(
             onSetAlarm = viewModel::setQuickAlarm,
             onOpenClockApp = viewModel::openClockApp,
             onDismiss = { showQuickAlarmDialog = false }
+        )
+    }
+
+    if (showWeatherDialog) {
+        WeatherSetupDialog(
+            weatherState = weatherUiState,
+            installedApps = installedApps,
+            citySearchResults = weatherCityResults,
+            isSearchingCities = isSearchingWeatherCities,
+            onSearchCities = viewModel::searchWeatherCities,
+            onSelectLocation = viewModel::selectWeatherLocation,
+            onUseCurrentLocation = onRequestWeatherLocation,
+            onRefreshWeather = viewModel::refreshWeather,
+            onToggleUnit = viewModel::toggleWeatherTemperatureUnit,
+            onOpenShortcutApp = viewModel::openWeatherAppShortcut,
+            onSelectShortcutApp = viewModel::setWeatherAppShortcut,
+            onDismiss = { showWeatherDialog = false }
+        )
+    }
+
+    if (showMusicServiceDialog) {
+        MusicServicePickerDialog(
+            selectedApp = preferredMusicApp,
+            installedApps = installedApps,
+            hasSessionAccess = mediaPlaybackState.hasSessionAccess,
+            onSelectService = viewModel::setPreferredMusicService,
+            onOpenSelectedService = viewModel::openPreferredMusicService,
+            onGrantNotificationAccess = onOpenNotificationAccessSettings,
+            onDismiss = { showMusicServiceDialog = false }
         )
     }
 
@@ -361,7 +428,8 @@ fun NephoApp(
                     when (target) {
                         HomeSectionTarget.CLOCK -> landscapeLeftListState.animateScrollToItem(0)
                         HomeSectionTarget.MUSIC -> landscapeLeftListState.animateScrollToItem(1)
-                        HomeSectionTarget.APPS -> landscapeLeftListState.animateScrollToItem(2)
+                        HomeSectionTarget.CALENDAR -> landscapeLeftListState.animateScrollToItem(2)
+                        HomeSectionTarget.APPS -> landscapeLeftListState.animateScrollToItem(3)
                         HomeSectionTarget.FEED -> {
                             viewModel.selectTab(PulseTab.FEED)
                             landscapeRightListState.animateScrollToItem(0)
@@ -375,17 +443,18 @@ fun NephoApp(
                     when (target) {
                         HomeSectionTarget.CLOCK -> portraitListState.animateScrollToItem(0)
                         HomeSectionTarget.MUSIC -> portraitListState.animateScrollToItem(1)
+                        HomeSectionTarget.CALENDAR -> portraitListState.animateScrollToItem(2)
                         HomeSectionTarget.FEED -> {
                             viewModel.selectTab(PulseTab.FEED)
-                            portraitListState.animateScrollToItem(2)
+                            portraitListState.animateScrollToItem(3)
                         }
                         HomeSectionTarget.VAULT -> {
                             viewModel.selectTab(PulseTab.LINKS_VAULT)
-                            portraitListState.animateScrollToItem(2)
+                            portraitListState.animateScrollToItem(3)
                         }
                         HomeSectionTarget.APPS -> {
-                            // 0=Clock, 1=Music, 2=InboxSwitcher, 3..3+inboxItemCount-1=InboxItems
-                            val appDrawerHeaderIndex = 3 + inboxItemCount
+                            // 0=Clock, 1=Music, 2=Calendar, 3=InboxSwitcher, 4..4+inboxItemCount-1=InboxItems
+                            val appDrawerHeaderIndex = 4 + inboxItemCount
                             portraitListState.animateScrollToItem(appDrawerHeaderIndex)
                         }
                     }
@@ -394,7 +463,7 @@ fun NephoApp(
         }
 
         val jumpToDrawerLetter: (String) -> Unit = { letter ->
-            val drawerHeaderIndex = if (isLandscapeSplit) 2 else (3 + inboxItemCount)
+            val drawerHeaderIndex = if (isLandscapeSplit) 3 else (4 + inboxItemCount)
             val offsetInsideDrawer = computeLetterOffsetInDrawer(groupedApps, letter)
             if (offsetInsideDrawer >= 0) {
                 val targetIndex = drawerHeaderIndex + 1 + offsetInsideDrawer
@@ -446,7 +515,10 @@ fun NephoApp(
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                                    modifier = Modifier
+                                        .clip(RoundedCornerShape(8.dp))
+                                        .clickable { viewModel.onHomeButtonPressed() }
                                 ) {
                                     Image(
                                         painter = painterResource(R.drawable.nepho_mark),
@@ -597,6 +669,33 @@ fun NephoApp(
                                         modifier = Modifier.testTag("menu_default_home")
                                     )
                                     DropdownMenuItem(
+                                        text = {
+                                            Text(
+                                                if (isScreenLockEnabled) {
+                                                    stringResource(R.string.action_double_tap_lock_active)
+                                                } else {
+                                                    stringResource(R.string.action_enable_double_tap_lock)
+                                                }
+                                            )
+                                        },
+                                        leadingIcon = {
+                                            Icon(
+                                                imageVector = if (isScreenLockEnabled) Icons.Filled.Lock else Icons.Outlined.Lock,
+                                                contentDescription = null,
+                                                tint = if (isScreenLockEnabled) EmeraldOk else MaterialTheme.colorScheme.onSurface
+                                            )
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            if (isScreenLockEnabled) {
+                                                onDoubleTapScreenOff()
+                                            } else {
+                                                onEnableScreenLockAdmin()
+                                            }
+                                        },
+                                        modifier = Modifier.testTag("menu_double_tap_lock")
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.digest_title)) },
                                         onClick = {
                                             menuExpanded = false
@@ -685,15 +784,24 @@ fun NephoApp(
                 )
             }
         ) { innerPadding ->
-            if (isLandscapeSplit) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding)
-                        .padding(horizontal = 16.dp)
-                        .testTag("home_landscape_split"),
-                    horizontalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .padding(innerPadding)
+                    .homeScreenGestures(
+                        onDoubleTapScreenOff = onDoubleTapScreenOff,
+                        onSwipeLeftGoogleSearch = viewModel::openGoogleSearch
+                    )
+                    .testTag("home_gesture_surface")
+            ) {
+                if (isLandscapeSplit) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 16.dp)
+                            .testTag("home_landscape_split"),
+                        horizontalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
                     // Left Pane (~45%): Clock, Music Controls, Searchable A-Z App Drawer
                     LazyColumn(
                         state = landscapeLeftListState,
@@ -707,7 +815,9 @@ fun NephoApp(
                         item(key = "home_clock") {
                             HomeClockCard(
                                 nextAlarmSummary = nextAlarmSummary,
-                                onClick = { showQuickAlarmDialog = true }
+                                onClick = { showQuickAlarmDialog = true },
+                                weatherState = weatherUiState,
+                                onWeatherClick = { showWeatherDialog = true }
                             )
                         }
                         item(key = "home_music") {
@@ -717,7 +827,18 @@ fun NephoApp(
                                 onSkipPrevious = viewModel::mediaSkipPrevious,
                                 onSkipNext = viewModel::mediaSkipNext,
                                 onOpenMusicApp = viewModel::openMusicApp,
-                                onGrantNotificationAccess = onOpenNotificationAccessSettings
+                                onGrantNotificationAccess = onOpenNotificationAccessSettings,
+                                preferredMusicApp = preferredMusicApp,
+                                onChooseMusicService = { showMusicServiceDialog = true }
+                            )
+                        }
+                        item(key = "home_calendar") {
+                            HomeCalendarCard(
+                                scheduleState = calendarScheduleState,
+                                onRequestCalendarPermission = onRequestCalendarPermission,
+                                onRefresh = viewModel::refreshCalendarSchedule,
+                                onOpenEvent = viewModel::openCalendarEvent,
+                                onOpenCalendarApp = viewModel::openGoogleCalendar
                             )
                         }
                         appDrawerSectionItems(
@@ -817,9 +938,7 @@ fun NephoApp(
             } else {
                 // Portrait: Single continuous vertical scroll (longer than one page)
                 Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .padding(innerPadding),
+                    modifier = Modifier.fillMaxSize(),
                     contentAlignment = Alignment.TopCenter
                 ) {
                     LazyColumn(
@@ -835,7 +954,9 @@ fun NephoApp(
                         item(key = "home_clock") {
                             HomeClockCard(
                                 nextAlarmSummary = nextAlarmSummary,
-                                onClick = { showQuickAlarmDialog = true }
+                                onClick = { showQuickAlarmDialog = true },
+                                weatherState = weatherUiState,
+                                onWeatherClick = { showWeatherDialog = true }
                             )
                         }
 
@@ -846,7 +967,19 @@ fun NephoApp(
                                 onSkipPrevious = viewModel::mediaSkipPrevious,
                                 onSkipNext = viewModel::mediaSkipNext,
                                 onOpenMusicApp = viewModel::openMusicApp,
-                                onGrantNotificationAccess = onOpenNotificationAccessSettings
+                                onGrantNotificationAccess = onOpenNotificationAccessSettings,
+                                preferredMusicApp = preferredMusicApp,
+                                onChooseMusicService = { showMusicServiceDialog = true }
+                            )
+                        }
+
+                        item(key = "home_calendar") {
+                            HomeCalendarCard(
+                                scheduleState = calendarScheduleState,
+                                onRequestCalendarPermission = onRequestCalendarPermission,
+                                onRefresh = viewModel::refreshCalendarSchedule,
+                                onOpenEvent = viewModel::openCalendarEvent,
+                                onOpenCalendarApp = viewModel::openGoogleCalendar
                             )
                         }
 
@@ -932,6 +1065,7 @@ fun NephoApp(
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -1054,9 +1188,7 @@ private fun computeInboxItemCount(
             if (!isNotificationAccessGranted || !bannerDismissed) count += 1 // onboarding banner
             count += 1 // search & filters
             if (selectedAppFilter != null) count += 1 // selected_app_link
-            if (notifications.isEmpty()) {
-                count += 1 // empty_feed
-            } else {
+            if (notifications.isNotEmpty()) {
                 val groups = notifications.groupBy { it.packageName }
                 groups.forEach { (pkg, items) ->
                     count += 1 // group header

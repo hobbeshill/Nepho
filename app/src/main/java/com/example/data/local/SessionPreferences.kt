@@ -14,6 +14,26 @@ import kotlinx.coroutines.flow.distinctUntilChanged
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.map
 import org.json.JSONObject
+import java.util.Locale
+
+data class StoredWeatherPrefs(
+    val locationName: String = "",
+    val latitude: Double? = null,
+    val longitude: Double? = null,
+    val useFahrenheit: Boolean = defaultUseFahrenheit(),
+    val shortcutPackage: String? = null,
+    val cachedTempC: Double? = null,
+    val cachedHighC: Double? = null,
+    val cachedLowC: Double? = null,
+    val cachedWeatherCode: Int? = null,
+    val cachedIsDay: Boolean = true,
+    val cachedUpdatedAt: Long = 0L
+) {
+    companion object {
+        private val fahrenheitCountries = setOf("US", "BS", "BZ", "KY", "PW")
+        fun defaultUseFahrenheit(): Boolean = Locale.getDefault().country.uppercase() in fahrenheitCountries
+    }
+}
 
 private val Context.pulseSessionDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "nepho_session_prefs"
@@ -32,6 +52,12 @@ class SessionPreferences(private val context: Context) {
         val UPDATE_GITHUB_REPO = stringPreferencesKey("update_github_repo")
         val PINNED_SHORTCUTS_JSON = stringPreferencesKey("pinned_shortcuts_json")
         val SHORTCUTS_CUSTOMIZED = booleanPreferencesKey("shortcuts_customized")
+        val WEATHER_LOCATION_NAME = stringPreferencesKey("weather_location_name")
+        val WEATHER_LAT_LON = stringPreferencesKey("weather_lat_lon")
+        val WEATHER_USE_FAHRENHEIT = booleanPreferencesKey("weather_use_fahrenheit")
+        val WEATHER_SHORTCUT_PACKAGE = stringPreferencesKey("weather_shortcut_package")
+        val WEATHER_CACHE_JSON = stringPreferencesKey("weather_cache_json")
+        val PREFERRED_MUSIC_PACKAGE = stringPreferencesKey("preferred_music_package")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -72,6 +98,32 @@ class SessionPreferences(private val context: Context) {
 
     val shortcutsCustomizedFlow: Flow<Boolean> = context.pulseSessionDataStore.data.map { prefs ->
         prefs[Keys.SHORTCUTS_CUSTOMIZED] ?: false
+    }.distinctUntilChanged()
+
+    val weatherPrefsFlow: Flow<StoredWeatherPrefs> = context.pulseSessionDataStore.data.map { prefs ->
+        val latLonParts = prefs[Keys.WEATHER_LAT_LON]?.split(",")
+        val lat = latLonParts?.getOrNull(0)?.toDoubleOrNull()
+        val lon = latLonParts?.getOrNull(1)?.toDoubleOrNull()
+        val cacheJson = prefs[Keys.WEATHER_CACHE_JSON]?.let { raw ->
+            runCatching { JSONObject(raw) }.getOrNull()
+        }
+        StoredWeatherPrefs(
+            locationName = prefs[Keys.WEATHER_LOCATION_NAME].orEmpty(),
+            latitude = lat,
+            longitude = lon,
+            useFahrenheit = prefs[Keys.WEATHER_USE_FAHRENHEIT] ?: StoredWeatherPrefs.defaultUseFahrenheit(),
+            shortcutPackage = prefs[Keys.WEATHER_SHORTCUT_PACKAGE]?.takeIf { it.isNotBlank() },
+            cachedTempC = cacheJson?.optDouble("tempC")?.takeIf { !it.isNaN() },
+            cachedHighC = cacheJson?.optDouble("highC")?.takeIf { !it.isNaN() },
+            cachedLowC = cacheJson?.optDouble("lowC")?.takeIf { !it.isNaN() },
+            cachedWeatherCode = if (cacheJson?.has("code") == true) cacheJson.optInt("code") else null,
+            cachedIsDay = cacheJson?.optBoolean("isDay", true) ?: true,
+            cachedUpdatedAt = cacheJson?.optLong("updatedAt", 0L) ?: 0L
+        )
+    }.distinctUntilChanged()
+
+    val preferredMusicPackageFlow: Flow<String?> = context.pulseSessionDataStore.data.map { prefs ->
+        prefs[Keys.PREFERRED_MUSIC_PACKAGE]?.takeIf { it.isNotBlank() }
     }.distinctUntilChanged()
 
     suspend fun ensureSessionOpenedAt(): Long {
@@ -167,6 +219,60 @@ class SessionPreferences(private val context: Context) {
             if (markCustomized) {
                 prefs[Keys.SHORTCUTS_CUSTOMIZED] = true
             }
+        }
+    }
+
+    suspend fun setWeatherLocation(name: String, latitude: Double, longitude: Double) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.WEATHER_LOCATION_NAME] = name.trim()
+            prefs[Keys.WEATHER_LAT_LON] = "$latitude,$longitude"
+        }
+    }
+
+    suspend fun setWeatherUseFahrenheit(useFahrenheit: Boolean) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.WEATHER_USE_FAHRENHEIT] = useFahrenheit
+        }
+    }
+
+    suspend fun setWeatherShortcutPackage(packageName: String?) {
+        context.pulseSessionDataStore.edit { prefs ->
+            if (packageName.isNullOrBlank()) {
+                prefs.remove(Keys.WEATHER_SHORTCUT_PACKAGE)
+            } else {
+                prefs[Keys.WEATHER_SHORTCUT_PACKAGE] = packageName.trim()
+            }
+        }
+    }
+
+    suspend fun setPreferredMusicPackage(packageName: String?) {
+        context.pulseSessionDataStore.edit { prefs ->
+            if (packageName.isNullOrBlank()) {
+                prefs.remove(Keys.PREFERRED_MUSIC_PACKAGE)
+            } else {
+                prefs[Keys.PREFERRED_MUSIC_PACKAGE] = packageName.trim()
+            }
+        }
+    }
+
+    suspend fun saveWeatherSnapshot(
+        tempC: Double,
+        highC: Double?,
+        lowC: Double?,
+        weatherCode: Int,
+        isDay: Boolean,
+        updatedAt: Long = System.currentTimeMillis()
+    ) {
+        val json = JSONObject().apply {
+            put("tempC", tempC)
+            if (highC != null) put("highC", highC)
+            if (lowC != null) put("lowC", lowC)
+            put("code", weatherCode)
+            put("isDay", isDay)
+            put("updatedAt", updatedAt)
+        }
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.WEATHER_CACHE_JSON] = json.toString()
         }
     }
 
