@@ -1,20 +1,33 @@
 package com.example
 
+import android.app.Notification
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
+import android.graphics.Bitmap
+import android.graphics.BitmapFactory
+import android.graphics.drawable.Icon
+import android.net.Uri
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.testing.WorkManagerTestInitHelper
+import com.example.data.NotificationImageStore
 import com.example.data.PulseRepository
 import com.example.data.SupportedApp
 import com.example.data.UrlExtractor
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertArrayEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
+import java.io.File
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -75,6 +88,122 @@ class ExampleRobolectricTest {
         assertTrue(UrlExtractor.isImageUrl("https://c.tenor.com/xyz/tenor"))
         assertEquals(false, UrlExtractor.isImageUrl("https://example.com/report.pdf"))
         assertEquals(false, UrlExtractor.isImageUrl("https://docs.google.com/document/d/notes"))
+    }
+
+    @Test
+    @Config(sdk = [24, 36])
+    fun `chat gif attachment is copied without losing encoded animation`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        // Two-frame, one-pixel GIF with a looping application extension.
+        val gif = byteArrayOf(
+            71, 73, 70, 56, 57, 97, 1, 0, 1, 0, -128, 0, 0, 0, 0, 0, -1, -1, -1,
+            33, -1, 11, 78, 69, 84, 83, 67, 65, 80, 69, 50, 46, 48, 3, 1, 0, 0, 0,
+            33, -7, 4, 0, 10, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 68, 1, 0,
+            33, -7, 4, 0, 10, 0, 0, 0, 44, 0, 0, 0, 0, 1, 0, 1, 0, 0, 2, 2, 76, 1, 0, 59
+        )
+        val original = File.createTempFile("chat_attachment", ".gif", context.cacheDir)
+        var stored: File? = null
+        try {
+            original.writeBytes(gif)
+            val style = Notification.MessagingStyle("Me")
+                .addMessage(Notification.MessagingStyle.Message("Earlier text", 1, "Alex"))
+                .addMessage(
+                    Notification.MessagingStyle.Message("GIF", 2, "Alex")
+                        .setData("image/gif", Uri.fromFile(original))
+                )
+            val notification = Notification.Builder(context)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setStyle(style)
+                .build()
+
+            val path = NotificationImageStore.capture(context, "chat_gif", notification)
+            assertNotNull(path)
+            stored = File(requireNotNull(path))
+            original.delete()
+            assertArrayEquals(gif, stored.readBytes())
+            assertNotNull(BitmapFactory.decodeFile(stored.absolutePath))
+        } finally {
+            original.delete()
+            stored?.delete()
+        }
+    }
+
+    @Test
+    @Config(sdk = [31, 36])
+    fun `big picture icons are captured on supported Android versions`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val bitmap = Bitmap.createBitmap(3, 2, Bitmap.Config.ARGB_8888)
+        val notification = Notification.Builder(context, "test")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setStyle(Notification.BigPictureStyle().bigPicture(Icon.createWithBitmap(bitmap)))
+            .build()
+
+        val path = NotificationImageStore.capture(context, "icon_picture", notification)
+        assertNotNull(path)
+        val file = File(requireNotNull(path))
+        try {
+            val decoded = BitmapFactory.decodeFile(file.absolutePath)
+            assertEquals(3, decoded.width)
+            assertEquals(2, decoded.height)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `unavailable chat attachment falls back to notification picture`() {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val notification = Notification.Builder(context, "test")
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setStyle(
+                Notification.MessagingStyle("Me").addMessage(
+                    Notification.MessagingStyle.Message("Photo", 1, "Alex")
+                        .setData("image/png", Uri.fromFile(File(context.cacheDir, "missing.png")))
+                )
+            )
+            .build()
+        notification.extras.putParcelable(
+            Notification.EXTRA_PICTURE, Bitmap.createBitmap(2, 3, Bitmap.Config.ARGB_8888)
+        )
+        val path = NotificationImageStore.capture(context, "fallback_picture", notification)
+        assertNotNull(path)
+        val file = File(requireNotNull(path))
+        try {
+            assertEquals(3, BitmapFactory.decodeFile(file.absolutePath).height)
+        } finally {
+            file.delete()
+        }
+    }
+
+    @Test
+    fun `source app opening dispatches the selected conversations original intent`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        val first = PendingIntent.getActivity(
+            context, 101,
+            Intent(context, MainActivity::class.java).setData(Uri.parse("test://conversation/first")),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        val second = PendingIntent.getActivity(
+            context, 102,
+            Intent(context, MainActivity::class.java).setData(Uri.parse("test://conversation/second")),
+            PendingIntent.FLAG_IMMUTABLE
+        )
+        repo.registerContentIntent("first", first)
+        repo.registerContentIntent("second", second)
+
+        assertTrue(repo.openSourceConversation("second"))
+        assertEquals(
+            Uri.parse("test://conversation/second"),
+            shadowOf(context as android.app.Application).nextStartedActivity.data
+        )
+        second.cancel()
+        assertFalse(repo.openSourceConversation("second"))
+        assertFalse(repo.openSourceConversation("unknown"))
+        assertTrue(repo.openSourceConversation("first"))
+        repo.resetSession()
+        assertFalse(repo.openSourceConversation("first"))
     }
 
     @Test

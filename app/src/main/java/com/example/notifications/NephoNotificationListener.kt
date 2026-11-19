@@ -3,6 +3,7 @@ package com.example.notifications
 import android.app.Notification
 import android.app.PendingIntent
 import android.content.Context
+import android.os.Build
 import android.service.notification.NotificationListenerService
 import android.service.notification.StatusBarNotification
 import androidx.core.app.NotificationManagerCompat
@@ -54,7 +55,13 @@ class NephoNotificationListener : NotificationListenerService() {
         val normalText = extras?.getCharSequence(Notification.EXTRA_TEXT)?.toString()?.trim()
         val body = bigText?.takeIf { it.isNotEmpty() } ?: normalText.orEmpty()
 
-        if (rawTitle.isEmpty() && body.isEmpty()) return
+        val hasMedia = extras?.let {
+            it.containsKey(Notification.EXTRA_MESSAGES) ||
+                it.containsKey(Notification.EXTRA_PICTURE) ||
+                (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S &&
+                    it.containsKey(Notification.EXTRA_PICTURE_ICON))
+        } == true
+        if (rawTitle.isEmpty() && body.isEmpty() && !hasMedia) return
 
         val appLabel = resolveAppLabel(sbn.packageName)
         val finalTitle = rawTitle.ifEmpty { appLabel }
@@ -83,9 +90,6 @@ class NephoNotificationListener : NotificationListenerService() {
 
         val canReply = replyPendingIntent != null && !replyRemoteInputs.isNullOrEmpty()
         val localNotificationId = (sbn.key.hashCode() and 0x7FFFFFFF).coerceAtLeast(1000)
-
-        // Capture any attached picture (BigPictureStyle) before the original notification is cancelled
-        val attachedPicture = extras?.get(Notification.EXTRA_PICTURE) as? android.graphics.Bitmap
 
         serviceScope.launch {
             val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
@@ -119,6 +123,7 @@ class NephoNotificationListener : NotificationListenerService() {
                     )
                 )
             }
+            repository.registerContentIntent(sbn.key, notification.contentIntent)
 
             repository.ingestNotification(
                 key = sbn.key,
@@ -131,9 +136,7 @@ class NephoNotificationListener : NotificationListenerService() {
                 canReply = canReply,
                 secondaryActions = secondaryLabels,
                 sourceChannel = "LISTENER",
-                imageUri = attachedPicture?.let {
-                    NotificationImageStore.save(applicationContext, sbn.key, it)
-                }
+                imageUri = NotificationImageStore.capture(applicationContext, sbn.key, notification)
             )
 
             // Suppress the original app notification so only Nepho surfaces it

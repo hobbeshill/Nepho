@@ -43,6 +43,7 @@
     <string name="action_unstar_message">Unstar message</string>
     <string name="badge_starred_protected">STARRED • NEVER PURGED</string>
     <string name="action_open_app">Open %1$s</string>
+    <string name="media_load_failed">Could not load this picture or GIF.</string>
     <string name="thread_close">Close thread</string>
     <string name="thread_dismiss_all">Dismiss Thread</string>
     <string name="card_thread_hint">Tap to expand thread</string>

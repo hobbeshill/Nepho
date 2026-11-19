@@ -1,9 +1,12 @@
 package com.example.data
 
+import android.app.ActivityOptions
 import android.app.PendingIntent
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
+import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import com.example.data.local.ExtractedLinkEntity
@@ -35,7 +38,38 @@ class PulseRepository private constructor(
     val sessionPreferences: SessionPreferences
 ) {
     private val actionHandleMap = ConcurrentHashMap<String, NativeReplyHandle>()
+    private val contentIntentMap = ConcurrentHashMap<String, PendingIntent>()
     private val retentionCutoffTicker = MutableStateFlow(computeRetentionCutoff())
+
+    fun registerContentIntent(key: String, intent: PendingIntent?) {
+        if (intent != null) contentIntentMap[key] = intent else contentIntentMap.remove(key)
+    }
+
+    /** Opens the original conversation, never an unrelated app home screen. */
+    fun openSourceConversation(key: String): Boolean {
+        val intent = contentIntentMap[key] ?: return false
+        return try {
+            val options = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.UPSIDE_DOWN_CAKE) {
+                ActivityOptions.makeBasic().apply {
+                    setPendingIntentBackgroundActivityStartMode(
+                        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.BAKLAVA) {
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOW_IF_VISIBLE
+                        } else {
+                            ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                        }
+                    )
+                }.toBundle()
+            } else {
+                null
+            }
+            intent.send(appContext, 0, null, null, null, null, options)
+            true
+        } catch (e: PendingIntent.CanceledException) {
+            contentIntentMap.remove(key, intent)
+            Log.w("PulseRepository", "Source conversation action expired", e)
+            false
+        }
+    }
 
     fun registerNativeActionHandle(key: String, handle: NativeReplyHandle) {
         actionHandleMap[key] = handle
@@ -82,9 +116,10 @@ class PulseRepository private constructor(
         val removed = dao.purgeExpiredBefore(cutoff)
         // Clean up stale handles if keys no longer exist
         if (removed > 0) {
-            for (key in actionHandleMap.keys.toList()) {
+            for (key in actionHandleMap.keys + contentIntentMap.keys) {
                 if (dao.getByKey(key) == null) {
                     actionHandleMap.remove(key)
+                    contentIntentMap.remove(key)
                 }
             }
             NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
@@ -250,6 +285,7 @@ class PulseRepository private constructor(
         NephoNotificationListener.cancelSystemNotification(key)
         ReminderWorker.cancelReminder(appContext, key)
         actionHandleMap.remove(key)
+        contentIntentMap.remove(key)
         dao.dismissByKey(key)
     }
 
@@ -290,6 +326,7 @@ class PulseRepository private constructor(
     suspend fun resetSession(): Long {
         NotificationManagerCompat.from(appContext).cancelAll()
         actionHandleMap.clear()
+        contentIntentMap.clear()
         dao.clearUnstarredSessionData()
         NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
         val now = sessionPreferences.resetSessionOpenedAt()

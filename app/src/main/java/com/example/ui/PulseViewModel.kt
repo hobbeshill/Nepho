@@ -420,19 +420,11 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         }
     }
 
-    fun openSourceApp(packageName: String, appLabel: String) {
-        val ctx = getApplication<Application>()
-        val launchIntent = ctx.packageManager.getLaunchIntentForPackage(packageName)
-        if (launchIntent == null) {
-            _snackbarEvents.tryEmit("$appLabel is not installed on this device.")
-            return
-        }
-        launchIntent.addFlags(android.content.Intent.FLAG_ACTIVITY_NEW_TASK)
-        try {
-            ctx.startActivity(launchIntent)
-        } catch (e: Exception) {
-            Log.e(TAG, "Failed to open $packageName", e)
-            _snackbarEvents.tryEmit("Couldn't open $appLabel.")
+    fun openSourceApp(item: PulseNotificationItem) {
+        if (!repository.openSourceConversation(item.key)) {
+            _snackbarEvents.tryEmit(
+                "The original ${item.appLabel} conversation is no longer available. Open it in ${item.appLabel}."
+            )
         }
     }
 

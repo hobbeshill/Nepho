@@ -171,7 +171,7 @@ fun NephoApp(
         ThreadPopupDialog(
             threadItems = threadItems,
             onDismissRequest = { threadTargetId = null },
-            onOpenApp = { item -> viewModel.openSourceApp(item.packageName, item.appLabel) },
+            onOpenApp = viewModel::openSourceApp,
             onToggleStar = viewModel::toggleNotificationStar,
             onOpenReminderDialog = { item -> reminderTargetItem = item },
             onSendReply = viewModel::sendInlineReply,
@@ -432,7 +432,7 @@ fun NephoApp(
                                         )
                                     },
                                     onOpenApp = { item ->
-                                        viewModel.openSourceApp(item.packageName, item.appLabel)
+                                        viewModel.openSourceApp(item)
                                     },
                                     onToggleStar = viewModel::toggleNotificationStar,
                                     onOpenReminderDialog = { item -> reminderTargetItem = item },
