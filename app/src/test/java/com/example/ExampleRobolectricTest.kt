@@ -38,14 +38,9 @@ import com.example.ui.PulseTab
 import com.example.ui.PulseViewModel
 import com.example.updates.GitHubReleaseUpdater
 import com.example.updates.UpdateCheckState
-import com.example.webbridge.NephoWebBridgeServer
 import com.example.widget.NephoUnreadWidgetProvider
 import com.example.widget.NephoWidgetSnapshotBuilder
 import com.example.worker.DigestSchedule
-import org.json.JSONObject
-import java.net.HttpURLConnection
-import java.net.InetAddress
-import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -1539,128 +1534,6 @@ class ExampleRobolectricTest {
             repoSlug = "octocat/nepho"
         )
         assertTrue(upToDate is UpdateCheckState.UpToDate)
-    }
-
-    @Test
-    fun `NephoWebBridgeServer enforces PIN auth, serves state, mutates notifications, and revokes tokens on PIN rotation`() = runBlocking {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        val repo = PulseRepository.getInstance(context)
-        repo.resetSession()
-
-        val now = System.currentTimeMillis()
-        ingest(
-            repo = repo,
-            key = "wb_msg_1",
-            app = SupportedApp.MESSAGES,
-            title = "Alex",
-            body = "Check https://example.com/nepho",
-            postTime = now + 100,
-            canReply = true
-        )
-        ingest(
-            repo = repo,
-            key = "wb_mail_1",
-            app = SupportedApp.GMAIL,
-            title = "Receipt",
-            body = "Order #42",
-            postTime = now + 200,
-            canReply = false
-        )
-
-        val server = NephoWebBridgeServer(
-            repository = repo,
-            htmlProvider = { "<!doctype html><html><title>Nepho Web Companion</title></html>" },
-            requestedPort = 0,
-            bindAddress = InetAddress.getLoopbackAddress()
-        )
-        val port = server.start()
-        try {
-            fun httpCall(
-                method: String,
-                path: String,
-                token: String? = null,
-                body: String? = null
-            ): Pair<Int, String> {
-                val conn = (URL("http://127.0.0.1:$port$path").openConnection() as HttpURLConnection).apply {
-                    requestMethod = method
-                    connectTimeout = 3_000
-                    readTimeout = 3_000
-                    if (token != null) setRequestProperty("Authorization", "Bearer $token")
-                    if (body != null) {
-                        doOutput = true
-                        setRequestProperty("Content-Type", "application/json")
-                        outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
-                    }
-                }
-                val code = conn.responseCode
-                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
-                val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
-                conn.disconnect()
-                return code to text
-            }
-
-            // 1. Companion HTML is served at /
-            val (htmlCode, htmlBody) = httpCall("GET", "/")
-            assertEquals(200, htmlCode)
-            assertTrue(htmlBody.contains("Nepho Web Companion"))
-
-            // 2. Unauthenticated state request is rejected
-            val (unauthCode, _) = httpCall("GET", "/api/state")
-            assertEquals(401, unauthCode)
-
-            // 3. Wrong PIN is rejected; correct PIN returns bearer token
-            val (badPinCode, _) = httpCall("POST", "/api/auth", body = """{"pin":"000000"}""")
-            if (server.pairingPin != "000000") {
-                assertEquals(401, badPinCode)
-            }
-            val (authCode, authBody) = httpCall("POST", "/api/auth", body = """{"pin":"${server.pairingPin}"}""")
-            assertEquals(200, authCode)
-            val token = JSONObject(authBody).getString("token")
-            assertTrue(token.isNotBlank())
-
-            // 4. Authenticated /api/state returns notifications and extracted links
-            val (stateCode, stateBody) = httpCall("GET", "/api/state", token = token)
-            assertEquals(200, stateCode)
-            val stateJson = JSONObject(stateBody)
-            assertEquals(2, stateJson.getInt("unreadTotal"))
-            assertEquals(2, stateJson.getJSONArray("notifications").length())
-            assertEquals(1, stateJson.getJSONArray("links").length())
-
-            // 5. Mark read, star, reply, and dismiss mutate PulseRepository
-            val (readCode, _) = httpCall("POST", "/api/mark-read", token = token, body = """{"key":"wb_mail_1"}""")
-            assertEquals(200, readCode)
-            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isRead)
-
-            val (starCode, starBody) = httpCall("POST", "/api/star", token = token, body = """{"key":"wb_mail_1"}""")
-            assertEquals(200, starCode)
-            assertTrue(JSONObject(starBody).getBoolean("isStarred"))
-            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isStarred)
-
-            val (replyCode, _) = httpCall("POST", "/api/reply", token = token, body = """{"key":"wb_msg_1","text":"On my way!"}""")
-            assertEquals(200, replyCode)
-            val replied = repo.getNotificationByKey("wb_msg_1")!!
-            assertTrue(replied.isDismissed)
-            assertTrue(replied.repliesJson.contains("On my way!"))
-
-            val (dismissCode, _) = httpCall("POST", "/api/dismiss", token = token, body = """{"key":"wb_mail_1"}""")
-            assertEquals(200, dismissCode)
-            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isDismissed)
-
-            // 6. Rotating PIN immediately revokes existing session token
-            val oldPin = server.pairingPin
-            val newPin = server.rotatePin()
-            assertEquals(6, newPin.length)
-            val (revokedCode, _) = httpCall("GET", "/api/state", token = token)
-            assertEquals(401, revokedCode)
-            // Ensure unstarred cleanup
-            if (oldPin == newPin) {
-                assertEquals(6, oldPin.length)
-            }
-        } finally {
-            server.stop()
-            repo.toggleNotificationStar("wb_mail_1")
-            repo.resetSession()
-        }
     }
 }
 

@@ -1,5 +1,7 @@
 <resources>
     <string name="app_name">Nepho</string>
+    <string name="app_header_tagline">" - mental clarity "</string>
+    <string name="app_version_short">v%1$s</string>
     <string name="tab_feed">Feed</string>
     <string name="tab_vault">Links Vault</string>
     <string name="status_window_pill">Active since %1$s • 24h Rolling Window</string>
@@ -160,31 +162,5 @@
     <string name="updates_url_copied">GitHub Releases URL copied to clipboard.</string>
     <string name="updates_browser_unavailable">No browser available to open the download link.</string>
     <string name="updates_close">Close</string>
-    <string name="action_web_companion">Web Companion</string>
-    <string name="web_bridge_title">Local Wi-Fi Web Companion</string>
-    <string name="web_bridge_live_pill">Web Live</string>
-    <string name="web_bridge_status_running">Live on Local Wi-Fi</string>
-    <string name="web_bridge_status_stopped">Bridge Stopped</string>
-    <string name="web_bridge_action_start">Start Web Bridge</string>
-    <string name="web_bridge_action_stop">Stop Bridge</string>
-    <string name="web_bridge_url_label">Open on your computer (same Wi-Fi)</string>
-    <string name="web_bridge_pin_label">6-Digit Pairing PIN</string>
-    <string name="web_bridge_action_copy_url">Copy URL</string>
-    <string name="web_bridge_action_share_url">Share</string>
-    <string name="web_bridge_action_copy_pin">Copy PIN</string>
-    <string name="web_bridge_action_rotate_pin">Rotate PIN</string>
-    <string name="web_bridge_clients_connected">%1$d browser session(s) connected</string>
-    <string name="web_bridge_no_wifi_warning">Connect your phone to Wi-Fi to reach the Web Companion from another device on your network.</string>
-    <string name="web_bridge_how_to_title">How to Connect</string>
-    <string name="web_bridge_how_to_steps">1. Connect your laptop or desktop to the same Wi-Fi.\n2. Open the local URL above in any browser.\n3. Enter the 6-digit PIN to browse alerts, open Links Vault, and send replies directly through your phone.</string>
-    <string name="web_bridge_privacy_note">100% local LAN only. Notifications never leave your Wi-Fi network, and stopping the bridge or rotating the PIN disconnects all browser sessions immediately.</string>
-    <string name="web_bridge_url_copied">Web Companion URL copied.</string>
-    <string name="web_bridge_pin_copied">Pairing PIN copied.</string>
-    <string name="web_bridge_pin_rotated">New pairing PIN generated; existing browser sessions signed out.</string>
-    <string name="web_bridge_channel_name">Nepho Web Companion Bridge</string>
-    <string name="web_bridge_channel_desc">Persistent notification while the local Wi-Fi Web Companion server is active</string>
-    <string name="web_bridge_notif_title">Nepho Web Companion is Live</string>
-    <string name="web_bridge_notif_body">Open %1$s • PIN %2$s</string>
-    <string name="web_bridge_close">Close</string>
 </resources>
 

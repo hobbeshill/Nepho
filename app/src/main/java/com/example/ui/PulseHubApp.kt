@@ -30,7 +30,6 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
-import androidx.compose.material.icons.outlined.Laptop
 import androidx.compose.material.icons.outlined.Link
 import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
@@ -74,9 +73,13 @@ import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.SpanStyle
+import androidx.compose.ui.text.buildAnnotatedString
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.text.withStyle
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.example.BuildConfig
 import com.example.R
 import com.example.ui.theme.AmberSignal
 import com.example.ui.theme.BorderHairline
@@ -84,7 +87,6 @@ import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
 import com.example.ui.theme.EmeraldOk
-import com.example.ui.theme.EmeraldOkContainer
 import com.example.ui.theme.MidnightSurface
 import com.example.ui.theme.ObsidianBackground
 import kotlinx.coroutines.delay
@@ -124,7 +126,6 @@ fun NephoApp(
     val pendingWidgetThreadId by viewModel.pendingWidgetThreadId.collectAsStateWithLifecycle()
     val updateGithubRepo by viewModel.updateGithubRepo.collectAsStateWithLifecycle()
     val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
-    val webBridgeStatus by viewModel.webBridgeStatus.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -133,7 +134,6 @@ fun NephoApp(
     var showDigestDialog by rememberSaveable { mutableStateOf(false) }
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
-    var showWebCompanionDialog by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -240,24 +240,6 @@ fun NephoApp(
         )
     }
 
-    if (showWebCompanionDialog) {
-        val urlCopiedMsg = stringResource(R.string.web_bridge_url_copied)
-        val pinCopiedMsg = stringResource(R.string.web_bridge_pin_copied)
-        WebCompanionDialog(
-            status = webBridgeStatus,
-            onToggleBridge = viewModel::toggleWebBridge,
-            onRotatePin = viewModel::rotateWebBridgePin,
-            onCopyUrl = { url ->
-                viewModel.copyToClipboard("Nepho Web Companion URL", url, urlCopiedMsg)
-            },
-            onShareUrl = viewModel::shareWebCompanionUrl,
-            onCopyPin = { pin ->
-                viewModel.copyToClipboard("Nepho Pairing PIN", pin, pinCopiedMsg)
-            },
-            onDismiss = { showWebCompanionDialog = false }
-        )
-    }
-
     reminderTargetItem?.let { target ->
         SetReminderDialog(
             item = target,
@@ -331,20 +313,52 @@ fun NephoApp(
                             Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
                                 Row(
                                     verticalAlignment = Alignment.CenterVertically,
-                                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                                    horizontalArrangement = Arrangement.spacedBy(6.dp)
                                 ) {
                                     Image(
                                         painter = painterResource(R.drawable.nepho_mark),
                                         contentDescription = stringResource(R.string.app_name),
                                         contentScale = ContentScale.Crop,
                                         modifier = Modifier
-                                            .size(28.dp)
+                                            .size(26.dp)
                                             .clip(RoundedCornerShape(7.dp))
                                             .testTag("top_bar_nepho_logo")
                                     )
+                                    val appName = stringResource(R.string.app_name)
+                                    val tagline = stringResource(R.string.app_header_tagline)
+                                    val titleColor = MaterialTheme.colorScheme.onBackground
+                                    val taglineColor = MaterialTheme.colorScheme.onSurfaceVariant
+                                    val taglineStyle = MaterialTheme.typography.bodySmall
                                     Text(
-                                        text = stringResource(R.string.app_name),
-                                        style = MaterialTheme.typography.titleLarge
+                                        text = buildAnnotatedString {
+                                            withStyle(SpanStyle(color = titleColor)) {
+                                                append(appName)
+                                            }
+                                            withStyle(
+                                                SpanStyle(
+                                                    color = taglineColor,
+                                                    fontFamily = taglineStyle.fontFamily,
+                                                    fontWeight = taglineStyle.fontWeight,
+                                                    fontSize = taglineStyle.fontSize
+                                                )
+                                            ) {
+                                                append(tagline)
+                                            }
+                                        },
+                                        style = MaterialTheme.typography.titleLarge,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis,
+                                        modifier = Modifier
+                                            .weight(1f, fill = false)
+                                            .testTag("top_bar_title")
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.app_version_short, BuildConfig.VERSION_NAME),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = CyanPulse,
+                                        maxLines = 1,
+                                        softWrap = false,
+                                        modifier = Modifier.testTag("top_bar_version")
                                     )
                                     val healthDotColor = when {
                                         !listenerHealth.isAccessGranted -> CrimsonError
@@ -357,24 +371,6 @@ fun NephoApp(
                                             .clip(CircleShape)
                                             .background(healthDotColor)
                                     )
-                                    if (webBridgeStatus.isRunning) {
-                                        Surface(
-                                            shape = RoundedCornerShape(999.dp),
-                                            color = EmeraldOkContainer,
-                                            border = BorderStroke(1.dp, EmeraldOk.copy(alpha = 0.5f)),
-                                            modifier = Modifier
-                                                .clip(RoundedCornerShape(999.dp))
-                                                .clickable { showWebCompanionDialog = true }
-                                                .testTag("top_bar_web_live_pill")
-                                        ) {
-                                            Text(
-                                                text = stringResource(R.string.web_bridge_live_pill),
-                                                style = MaterialTheme.typography.labelSmall,
-                                                color = EmeraldOk,
-                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
-                                            )
-                                        }
-                                    }
                                 }
                                 val sinceText = timeFmt.format(Date(sessionOpenedAt))
                                 Surface(
@@ -474,17 +470,6 @@ fun NephoApp(
                                             showDiagnosticsDialog = true
                                         },
                                         modifier = Modifier.testTag("menu_capture_diagnostics")
-                                    )
-                                    DropdownMenuItem(
-                                        text = { Text(stringResource(R.string.action_web_companion)) },
-                                        leadingIcon = {
-                                            Icon(Icons.Outlined.Laptop, contentDescription = null)
-                                        },
-                                        onClick = {
-                                            menuExpanded = false
-                                            showWebCompanionDialog = true
-                                        },
-                                        modifier = Modifier.testTag("menu_web_companion")
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_app_updates)) },

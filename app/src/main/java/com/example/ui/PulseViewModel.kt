@@ -29,9 +29,6 @@ import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
 import com.example.updates.GitHubReleaseUpdater
 import com.example.updates.UpdateCheckState
-import com.example.webbridge.NephoWebBridgeService
-import com.example.webbridge.WebBridgeController
-import com.example.webbridge.WebBridgeStatus
 import com.example.widget.NephoWidgetUpdater
 import com.example.worker.DigestSchedule
 import com.example.worker.DigestWorker
@@ -93,8 +90,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     private val _updateCheckState = MutableStateFlow<UpdateCheckState>(UpdateCheckState.Idle)
     val updateCheckState: StateFlow<UpdateCheckState> = _updateCheckState.asStateFlow()
-
-    val webBridgeStatus: StateFlow<WebBridgeStatus> = WebBridgeController.status
 
     private val _selectedTab = MutableStateFlow(PulseTab.FEED)
     val selectedTab: StateFlow<PulseTab> = _selectedTab.asStateFlow()
@@ -392,39 +387,6 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
         clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
         emitSnackbar(confirmationMessage)
-    }
-
-    fun shareWebCompanionUrl(url: String) {
-        val ctx = getApplication<Application>()
-        val shareIntent = Intent(Intent.ACTION_SEND).apply {
-            type = "text/plain"
-            putExtra(Intent.EXTRA_TEXT, url)
-        }
-        val chooser = Intent.createChooser(shareIntent, ctx.getString(R.string.web_bridge_title)).apply {
-            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        }
-        try {
-            ctx.startActivity(chooser)
-        } catch (e: Exception) {
-            Log.w(TAG, "Unable to share web companion URL", e)
-        }
-    }
-
-    fun toggleWebBridge() {
-        val ctx = getApplication<Application>()
-        if (WebBridgeController.status.value.isRunning) {
-            NephoWebBridgeService.stopBridge(ctx)
-        } else {
-            NephoWebBridgeService.startBridge(ctx)
-        }
-    }
-
-    fun rotateWebBridgePin() {
-        val ctx = getApplication<Application>()
-        if (WebBridgeController.status.value.isRunning) {
-            NephoWebBridgeService.rotatePin(ctx)
-            emitSnackbar(ctx.getString(R.string.web_bridge_pin_rotated))
-        }
     }
 
     fun setDigestEnabled(enabled: Boolean) {
