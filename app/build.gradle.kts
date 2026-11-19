@@ -109,7 +109,7 @@ dependencies {
   implementation(libs.coil.compose)
   implementation(libs.coil.gif)
   // implementation(libs.converter.moshi)
-  // implementation(libs.firebase.ai)
+  implementation(libs.firebase.ai)
   // Uncomment to use Firestore:
   // implementation(libs.firebase.firestore)
 

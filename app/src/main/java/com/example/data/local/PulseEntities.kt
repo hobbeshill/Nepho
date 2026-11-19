@@ -64,3 +64,29 @@ data class ExtractedLinkEntity(
     val postTime: Long,
     val isStarred: Boolean = false
 )
+
+@Entity(tableName = "digest_settings")
+data class DigestSettingsEntity(
+    @PrimaryKey val id: Int = 1,
+    val enabled: Boolean,
+    val nextEnd: Long,
+    val lastError: String? = null
+)
+
+@Entity(tableName = "digest_events", indices = [Index(value = ["capturedAt"])])
+data class DigestEventEntity(
+    @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    val capturedAt: Long,
+    val appLabel: String,
+    val title: String,
+    val body: String,
+    val urlsJson: String
+)
+
+@Entity(tableName = "digest_summaries")
+data class DigestSummaryEntity(
+    @PrimaryKey val endTime: Long,
+    val startTime: Long,
+    val summary: String,
+    val urlsJson: String
+)

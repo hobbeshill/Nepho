@@ -60,4 +60,19 @@
     <string name="swipe_label_unstar">Unstar</string>
     <string name="action_group_mark_read">Mark %1$s read</string>
     <string name="action_group_clear">Clear %1$s alerts</string>
+    <string name="digest_title">Gemini digests</string>
+    <string name="digest_enable">Enable 6 AM and 6 PM digests</string>
+    <string name="digest_privacy">When enabled, captured notification titles and messages are sent to Google Gemini for summarization. History includes dismissed alerts and updates, survives session resets, and is retained until summarized. Summaries remain until app data is cleared. Android backups may include this data. Only activity captured while enabled is included. Blocked and opted-out apps are excluded. Android may delay delivery.</string>
+    <string name="digest_failed">Digest generation failed. Nepho will retry; check your connection and Firebase AI configuration.</string>
+    <string name="digest_settings_failed">Could not update digest settings.</string>
+    <string name="digest_no_activity">No notification activity was captured in this period.</string>
+    <string name="digest_empty">No digests yet.</string>
+    <string name="digest_ready_title">Your Nepho digest is ready</string>
+    <string name="digest_ready_text">Tap to view your activity summary.</string>
+    <string name="digest_failed_title">Nepho digest delayed</string>
+    <string name="digest_channel_name">Nepho Digests</string>
+    <string name="digest_channel_desc">Scheduled Gemini digest updates and errors</string>
+    <string name="digest_link_failed">Could not open this link.</string>
+    <string name="digest_links">Links from captured notifications</string>
+    <string name="digest_close">Close</string>
 </resources>

@@ -10,9 +10,12 @@ import androidx.sqlite.db.SupportSQLiteDatabase
 @Database(
     entities = [
         PulseNotificationEntity::class,
-        ExtractedLinkEntity::class
+        ExtractedLinkEntity::class,
+        DigestSettingsEntity::class,
+        DigestEventEntity::class,
+        DigestSummaryEntity::class
     ],
-    version = 4,
+    version = 5,
     exportSchema = false
 )
 abstract class PulseDatabase : RoomDatabase() {
@@ -83,6 +86,15 @@ abstract class PulseDatabase : RoomDatabase() {
             }
         }
 
+        internal val MIGRATION_4_5 = object : Migration(4, 5) {
+            override fun migrate(db: SupportSQLiteDatabase) {
+                db.execSQL("CREATE TABLE IF NOT EXISTS `digest_settings` (`id` INTEGER NOT NULL, `enabled` INTEGER NOT NULL, `nextEnd` INTEGER NOT NULL, `lastError` TEXT, PRIMARY KEY(`id`))")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `digest_events` (`id` INTEGER PRIMARY KEY AUTOINCREMENT NOT NULL, `capturedAt` INTEGER NOT NULL, `appLabel` TEXT NOT NULL, `title` TEXT NOT NULL, `body` TEXT NOT NULL, `urlsJson` TEXT NOT NULL)")
+                db.execSQL("CREATE INDEX IF NOT EXISTS `index_digest_events_capturedAt` ON `digest_events` (`capturedAt`)")
+                db.execSQL("CREATE TABLE IF NOT EXISTS `digest_summaries` (`endTime` INTEGER NOT NULL, `startTime` INTEGER NOT NULL, `summary` TEXT NOT NULL, `urlsJson` TEXT NOT NULL, PRIMARY KEY(`endTime`))")
+            }
+        }
+
         fun getInstance(context: Context): PulseDatabase {
             return INSTANCE ?: synchronized(this) {
                 INSTANCE ?: Room.databaseBuilder(
@@ -90,7 +102,7 @@ abstract class PulseDatabase : RoomDatabase() {
                     PulseDatabase::class.java,
                     "nepho_database"
                 )
-                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4)
+                    .addMigrations(MIGRATION_1_2, MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
                     .build()
                     .also { INSTANCE = it }
             }

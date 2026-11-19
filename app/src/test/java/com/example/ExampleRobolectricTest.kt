@@ -13,6 +13,7 @@ import android.net.Uri
 import android.os.Process
 import android.service.notification.StatusBarNotification
 import androidx.test.core.app.ApplicationProvider
+import androidx.room.Room
 import androidx.work.testing.WorkManagerTestInitHelper
 import com.example.data.NativeReplyHandle
 import com.example.data.NotificationImageStore
@@ -20,8 +21,13 @@ import com.example.data.PulseRepository
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UrlExtractor
+import com.example.data.local.DigestEventEntity
+import com.example.data.local.DigestSummaryEntity
+import com.example.data.local.PulseDatabase
+import com.example.data.local.PulseNotificationEntity
 import com.example.notifications.NephoNotificationListener
 import com.example.ui.PulseViewModel
+import com.example.worker.DigestSchedule
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -46,6 +52,8 @@ import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import java.io.File
 import java.util.UUID
+import java.util.Calendar
+import java.util.TimeZone
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [36])
@@ -55,6 +63,92 @@ class ExampleRobolectricTest {
     fun setUpWorkManager() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         WorkManagerTestInitHelper.initializeTestWorkManager(context)
+    }
+
+    @Test
+    fun `digest history retains dismissed and replaced alerts across session reset`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val db = Room.inMemoryDatabaseBuilder(context, PulseDatabase::class.java).build()
+        try {
+            val dao = db.pulseDao()
+            val end = System.currentTimeMillis() + 60_000
+            val notification = PulseNotificationEntity(
+                key = "same-key", notificationId = 1, packageName = "example",
+                appLabel = "Example", title = "First", body = "Original", postTime = System.currentTimeMillis()
+            )
+            val event = DigestEventEntity(
+                capturedAt = 0, appLabel = "Example", title = "First",
+                body = "Original", urlsJson = "[]"
+            )
+            dao.insertNotificationWithLinks(notification, emptyList(), event)
+            assertTrue(dao.getDigestEventsBefore(end).isEmpty())
+            dao.setDigestEnabled(true, end)
+            dao.insertNotificationWithLinks(notification, emptyList(), event)
+            dao.dismissByKey(notification.key)
+            dao.insertNotificationWithLinks(notification.copy(body = "Updated"), emptyList(), event.copy(body = "Updated"))
+            dao.clearUnstarredSessionData()
+            assertEquals(listOf("Original", "Updated"), dao.getDigestEventsBefore(end).map { it.body })
+
+            val digest = DigestSummaryEntity(end, end - 1, "summary", "[]")
+            dao.setDigestEnabled(false, end)
+            assertFalse(dao.completeDigest(digest, end + 1))
+            assertEquals(2, dao.getDigestEventsBefore(end).size)
+            dao.setDigestEnabled(true, end)
+            assertTrue(dao.completeDigest(digest, end + 1))
+            assertTrue(dao.getDigestEventsBefore(end).isEmpty())
+            assertEquals("summary", dao.observeDigestSummaries().first().single().summary)
+        } finally {
+            db.close()
+        }
+    }
+
+    @Test
+    fun `digest boundaries stay at six local time across daylight saving`() {
+        val original = TimeZone.getDefault()
+        try {
+            TimeZone.setDefault(TimeZone.getTimeZone("America/New_York"))
+            fun time(day: Int, hour: Int): Long = Calendar.getInstance().apply {
+                clear()
+                set(2026, Calendar.MARCH, day, hour, 0, 0)
+            }.timeInMillis
+            assertEquals(time(8, 6), DigestSchedule.nextBoundary(time(7, 18)))
+            assertEquals(time(7, 18), DigestSchedule.previousBoundary(time(8, 6)))
+            assertEquals(time(8, 18), DigestSchedule.nextBoundary(time(8, 6)))
+        } finally {
+            TimeZone.setDefault(original)
+        }
+    }
+
+    @Test
+    fun `version 4 database migrates without losing notifications`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val name = "digest-migration-${UUID.randomUUID()}"
+        val builder = { Room.databaseBuilder(context, PulseDatabase::class.java, name)
+            .addMigrations(PulseDatabase.MIGRATION_4_5).build() }
+        try {
+            val original = builder()
+            val entity = PulseNotificationEntity(
+                key = "retained", notificationId = 1, packageName = "example", appLabel = "Example",
+                title = "Title", body = "Body", postTime = System.currentTimeMillis()
+            )
+            original.pulseDao().insertNotification(entity)
+            original.close()
+            context.openOrCreateDatabase(name, Context.MODE_PRIVATE, null).use { db ->
+                db.execSQL("DROP TABLE digest_events")
+                db.execSQL("DROP TABLE digest_settings")
+                db.execSQL("DROP TABLE digest_summaries")
+                db.version = 4
+            }
+            val migrated = builder()
+            try {
+                assertEquals("Body", migrated.pulseDao().getByKey("retained")?.body)
+                assertTrue(migrated.pulseDao().getDigestEventsBefore(Long.MAX_VALUE).isEmpty())
+            } finally {
+                migrated.close()
+            }
+        } finally {
+            context.deleteDatabase(name)
+        }
     }
 
     private suspend fun ingest(

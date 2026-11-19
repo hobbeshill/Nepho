@@ -37,12 +37,59 @@ interface PulseDao {
     @Transaction
     suspend fun insertNotificationWithLinks(
         notification: PulseNotificationEntity,
-        links: List<ExtractedLinkEntity>
+        links: List<ExtractedLinkEntity>,
+        digestEvent: DigestEventEntity
     ) {
         insertNotification(notification)
         if (links.isNotEmpty()) {
             insertLinks(links)
         }
+        if (getDigestSettings()?.enabled == true) {
+            insertDigestEvent(digestEvent.copy(capturedAt = System.currentTimeMillis()))
+        }
+    }
+
+    @Query("SELECT * FROM digest_settings WHERE id = 1")
+    suspend fun getDigestSettings(): DigestSettingsEntity?
+
+    @Query("SELECT * FROM digest_settings WHERE id = 1")
+    fun observeDigestSettings(): Flow<DigestSettingsEntity?>
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun putDigestSettings(settings: DigestSettingsEntity)
+
+    @Transaction
+    suspend fun setDigestEnabled(enabled: Boolean, initialEnd: Long): DigestSettingsEntity {
+        val settings = getDigestSettings() ?: DigestSettingsEntity(enabled = false, nextEnd = initialEnd)
+        return settings.copy(enabled = enabled, lastError = null).also { putDigestSettings(it) }
+    }
+
+    @Query("UPDATE digest_settings SET lastError = :message WHERE id = 1")
+    suspend fun setDigestError(message: String?)
+
+    @Insert
+    suspend fun insertDigestEvent(event: DigestEventEntity)
+
+    @Query("SELECT * FROM digest_events WHERE capturedAt < :endTime ORDER BY capturedAt, id")
+    suspend fun getDigestEventsBefore(endTime: Long): List<DigestEventEntity>
+
+    @Query("DELETE FROM digest_events WHERE capturedAt < :endTime")
+    suspend fun deleteDigestEventsBefore(endTime: Long)
+
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun insertDigestSummary(summary: DigestSummaryEntity)
+
+    @Query("SELECT * FROM digest_summaries ORDER BY endTime DESC")
+    fun observeDigestSummaries(): Flow<List<DigestSummaryEntity>>
+
+    @Transaction
+    suspend fun completeDigest(summary: DigestSummaryEntity, nextEnd: Long): Boolean {
+        val settings = getDigestSettings() ?: return false
+        if (!settings.enabled || settings.nextEnd != summary.endTime) return false
+        insertDigestSummary(summary)
+        deleteDigestEventsBefore(summary.endTime)
+        putDigestSettings(settings.copy(nextEnd = nextEnd, lastError = null))
+        return true
     }
 
     @Query("UPDATE pulse_notifications SET isRead = 1 WHERE `key` = :key")

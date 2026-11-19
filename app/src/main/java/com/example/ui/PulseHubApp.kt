@@ -107,14 +107,34 @@ fun NephoApp(
     val allNotifications by viewModel.allActiveNotifications.collectAsStateWithLifecycle()
     val links by viewModel.activeLinks.collectAsStateWithLifecycle()
     val metrics by viewModel.metrics.collectAsStateWithLifecycle()
+    val digestSettings by viewModel.digestSettings.collectAsStateWithLifecycle()
+    val digestSummaries by viewModel.digestSummaries.collectAsStateWithLifecycle()
+    val openDigest by viewModel.openDigest.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
     var showComposeDialog by rememberSaveable { mutableStateOf(false) }
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
+    var showDigestDialog by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
+
+    LaunchedEffect(openDigest) {
+        if (openDigest) {
+            showDigestDialog = true
+            viewModel.clearOpenDigest()
+        }
+    }
+
+    if (showDigestDialog) {
+        DigestDialog(
+            settings = digestSettings,
+            summaries = digestSummaries,
+            onSetEnabled = viewModel::setDigestEnabled,
+            onDismiss = { showDigestDialog = false }
+        )
+    }
 
     LaunchedEffect(Unit) {
         viewModel.snackbarEvents.collect { event ->
@@ -309,6 +329,14 @@ fun NephoApp(
                                     expanded = menuExpanded,
                                     onDismissRequest = { menuExpanded = false }
                                 ) {
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.digest_title)) },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showDigestDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_digest")
+                                    )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_shade_preferences)) },
                                         leadingIcon = {

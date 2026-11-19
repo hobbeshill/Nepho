@@ -24,6 +24,7 @@ import kotlinx.coroutines.launch
 object LocalPulseNotifier {
     const val CHANNEL_ID = "nepho_stream"
     const val REMINDER_CHANNEL_ID = "nepho_reminders"
+    const val DIGEST_CHANNEL_ID = "nepho_digests"
     const val REMOTE_INPUT_KEY = "pulse_inline_reply"
 
     fun hasNotificationPermission(context: Context): Boolean {
@@ -59,6 +60,15 @@ object LocalPulseNotifier {
                     description = context.getString(R.string.reminder_channel_desc)
                 }
                 manager?.createNotificationChannel(reminderChannel)
+            }
+            if (manager?.getNotificationChannel(DIGEST_CHANNEL_ID) == null) {
+                manager?.createNotificationChannel(
+                    NotificationChannel(
+                        DIGEST_CHANNEL_ID,
+                        context.getString(R.string.digest_channel_name),
+                        NotificationManager.IMPORTANCE_DEFAULT
+                    ).apply { description = context.getString(R.string.digest_channel_desc) }
+                )
             }
         }
     }

@@ -32,6 +32,7 @@ class MainActivity : ComponentActivity() {
 
         enableEdgeToEdge()
         handleIncomingShareIntent(intent)
+        handleDigestIntent(intent)
 
         setContent {
             NephoTheme {
@@ -83,6 +84,14 @@ class MainActivity : ComponentActivity() {
         super.onNewIntent(intent)
         setIntent(intent)
         handleIncomingShareIntent(intent)
+        handleDigestIntent(intent)
+    }
+
+    private fun handleDigestIntent(intent: Intent?) {
+        if (intent?.getBooleanExtra("open_digest", false) == true) {
+            viewModel.requestOpenDigest()
+            intent.removeExtra("open_digest")
+        }
     }
 
     private fun handleIncomingShareIntent(intent: Intent?) {

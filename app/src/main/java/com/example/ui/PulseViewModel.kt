@@ -16,8 +16,11 @@ import com.example.data.SessionMetrics
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
+import com.example.data.local.PulseDatabase
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
+import com.example.worker.DigestSchedule
+import com.example.worker.DigestWorker
 import com.example.worker.RetentionPurgeWorker
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -47,6 +50,14 @@ data class SnackbarEvent(
 class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     private val repository = PulseRepository.getInstance(application)
+    private val digestDao = PulseDatabase.getInstance(application).pulseDao()
+
+    val digestSettings = digestDao.observeDigestSettings()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+    val digestSummaries = digestDao.observeDigestSummaries()
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
+    private val _openDigest = MutableStateFlow(false)
+    val openDigest = _openDigest.asStateFlow()
 
     private val _selectedTab = MutableStateFlow(PulseTab.FEED)
     val selectedTab: StateFlow<PulseTab> = _selectedTab.asStateFlow()
@@ -201,6 +212,10 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         RetentionPurgeWorker.schedulePeriodicPurge(application)
         viewModelScope.launch {
             repository.initializeSession()
+            val settings = digestDao.getDigestSettings()
+            if (settings?.enabled == true) {
+                DigestWorker.schedule(application, settings.nextEnd)
+            }
         }
         viewModelScope.launch {
             while (isActive) {
@@ -215,6 +230,31 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     fun selectTab(tab: PulseTab) {
         _selectedTab.value = tab
+    }
+
+    fun requestOpenDigest() {
+        _openDigest.value = true
+    }
+
+    fun clearOpenDigest() {
+        _openDigest.value = false
+    }
+
+    fun setDigestEnabled(enabled: Boolean) {
+        viewModelScope.launch {
+            try {
+                val context = getApplication<Application>()
+                val settings = digestDao.setDigestEnabled(
+                    enabled,
+                    DigestSchedule.nextBoundary(System.currentTimeMillis())
+                )
+                if (enabled) DigestWorker.schedule(context, settings.nextEnd)
+                else DigestWorker.cancel(context)
+            } catch (e: Exception) {
+                Log.e("PulseViewModel", "Could not update digest settings", e)
+                emitSnackbar(getApplication<Application>().getString(R.string.digest_settings_failed))
+            }
+        }
     }
 
     fun updateSearchQuery(query: String) {

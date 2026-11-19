@@ -11,6 +11,7 @@ import android.util.Log
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import com.example.data.local.ExtractedLinkEntity
+import com.example.data.local.DigestEventEntity
 import com.example.data.local.PulseDao
 import com.example.data.local.PulseDatabase
 import com.example.data.local.PulseNotificationEntity
@@ -183,7 +184,17 @@ class PulseRepository private constructor(
             )
         }
 
-        dao.insertNotificationWithLinks(entity, linkEntities)
+        dao.insertNotificationWithLinks(
+            entity,
+            linkEntities,
+            DigestEventEntity(
+                capturedAt = 0,
+                appLabel = appLabel,
+                title = title,
+                body = body,
+                urlsJson = entity.urlsJson
+            )
+        )
         val purgedCount = purgeExpired()
         return IngestResult(
             extractedLinkCount = linkEntities.size,
