@@ -2,6 +2,8 @@ package com.example.ui
 
 import android.app.Application
 import android.content.ActivityNotFoundException
+import android.content.ClipData
+import android.content.ClipboardManager
 import android.content.Context
 import android.content.Intent
 import android.net.Uri
@@ -10,6 +12,7 @@ import android.provider.Settings
 import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
+import com.example.BuildConfig
 import com.example.R
 import com.example.data.AppShadePreference
 import com.example.data.CachedGifAttachment
@@ -24,6 +27,12 @@ import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.PulseDatabase
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
+import com.example.updates.GitHubReleaseUpdater
+import com.example.updates.UpdateCheckState
+import com.example.webbridge.NephoWebBridgeService
+import com.example.webbridge.WebBridgeController
+import com.example.webbridge.WebBridgeStatus
+import com.example.widget.NephoWidgetUpdater
 import com.example.worker.DigestSchedule
 import com.example.worker.DigestWorker
 import com.example.worker.RetentionPurgeWorker
@@ -37,6 +46,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asSharedFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.combine
+import kotlinx.coroutines.flow.map
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
@@ -73,6 +83,18 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
     private val _openDigest = MutableStateFlow(false)
     val openDigest = _openDigest.asStateFlow()
+
+    private val _pendingWidgetThreadId = MutableStateFlow<String?>(null)
+    val pendingWidgetThreadId: StateFlow<String?> = _pendingWidgetThreadId.asStateFlow()
+
+    val updateGithubRepo: StateFlow<String> = repository.sessionPreferences.updateGithubRepoFlow
+        .map { saved -> saved.ifBlank { BuildConfig.DEFAULT_GITHUB_REPO } }
+        .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), BuildConfig.DEFAULT_GITHUB_REPO)
+
+    private val _updateCheckState = MutableStateFlow<UpdateCheckState>(UpdateCheckState.Idle)
+    val updateCheckState: StateFlow<UpdateCheckState> = _updateCheckState.asStateFlow()
+
+    val webBridgeStatus: StateFlow<WebBridgeStatus> = WebBridgeController.status
 
     private val _selectedTab = MutableStateFlow(PulseTab.FEED)
     val selectedTab: StateFlow<PulseTab> = _selectedTab.asStateFlow()
@@ -289,6 +311,122 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _openDigest.value = false
     }
 
+    fun openThreadFromWidget(threadId: String) {
+        if (threadId.isBlank()) return
+        _selectedTab.value = PulseTab.FEED
+        _selectedAppFilter.value = null
+        _unreadOnly.value = false
+        _hasLinksOnly.value = false
+        _starredOnly.value = false
+        _searchQuery.value = ""
+        _pendingWidgetThreadId.value = threadId
+    }
+
+    fun clearPendingWidgetThreadId() {
+        _pendingWidgetThreadId.value = null
+    }
+
+    fun applyAppFilterFromWidget(
+        packageName: String,
+        appLabel: String? = null,
+        unreadOnly: Boolean = true
+    ) {
+        _selectedTab.value = PulseTab.FEED
+        _hasLinksOnly.value = false
+        _starredOnly.value = false
+        _unreadOnly.value = unreadOnly
+        val coreApp = SupportedApp.filterableApps.firstOrNull { it.packageName == packageName }
+        if (coreApp != null) {
+            _selectedAppFilter.value = coreApp
+            _searchQuery.value = ""
+        } else {
+            _selectedAppFilter.value = null
+            _searchQuery.value = appLabel?.trim().orEmpty()
+        }
+    }
+
+    fun requestPinHomeWidget() {
+        val ctx = getApplication<Application>()
+        val requested = NephoWidgetUpdater.requestPinWidget(ctx)
+        emitSnackbar(
+            ctx.getString(
+                if (requested) R.string.widget_pin_requested else R.string.widget_pin_unavailable
+            )
+        )
+    }
+
+    fun checkForAppUpdates(rawRepoInput: String) {
+        val ctx = getApplication<Application>()
+        val normalized = GitHubReleaseUpdater.normalizeRepoSlug(rawRepoInput)
+        if (normalized == null) {
+            _updateCheckState.value = UpdateCheckState.Error(
+                ctx.getString(R.string.updates_invalid_repo)
+            )
+            return
+        }
+        viewModelScope.launch {
+            repository.sessionPreferences.setUpdateGithubRepo(normalized)
+            _updateCheckState.value = UpdateCheckState.Checking
+            _updateCheckState.value = GitHubReleaseUpdater.checkLatestRelease(
+                repoSlug = normalized,
+                currentVersionName = BuildConfig.VERSION_NAME
+            )
+        }
+    }
+
+    fun openExternalUrl(url: String) {
+        val ctx = getApplication<Application>()
+        val intent = Intent(Intent.ACTION_VIEW, Uri.parse(url)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            ctx.startActivity(intent)
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to open URL $url", e)
+            emitSnackbar(ctx.getString(R.string.updates_browser_unavailable))
+        }
+    }
+
+    fun copyToClipboard(label: String, text: String, confirmationMessage: String) {
+        val ctx = getApplication<Application>()
+        val clipboard = ctx.getSystemService(Context.CLIPBOARD_SERVICE) as? ClipboardManager
+        clipboard?.setPrimaryClip(ClipData.newPlainText(label, text))
+        emitSnackbar(confirmationMessage)
+    }
+
+    fun shareWebCompanionUrl(url: String) {
+        val ctx = getApplication<Application>()
+        val shareIntent = Intent(Intent.ACTION_SEND).apply {
+            type = "text/plain"
+            putExtra(Intent.EXTRA_TEXT, url)
+        }
+        val chooser = Intent.createChooser(shareIntent, ctx.getString(R.string.web_bridge_title)).apply {
+            addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        }
+        try {
+            ctx.startActivity(chooser)
+        } catch (e: Exception) {
+            Log.w(TAG, "Unable to share web companion URL", e)
+        }
+    }
+
+    fun toggleWebBridge() {
+        val ctx = getApplication<Application>()
+        if (WebBridgeController.status.value.isRunning) {
+            NephoWebBridgeService.stopBridge(ctx)
+        } else {
+            NephoWebBridgeService.startBridge(ctx)
+        }
+    }
+
+    fun rotateWebBridgePin() {
+        val ctx = getApplication<Application>()
+        if (WebBridgeController.status.value.isRunning) {
+            NephoWebBridgeService.rotatePin(ctx)
+            emitSnackbar(ctx.getString(R.string.web_bridge_pin_rotated))
+        }
+    }
+
     fun setDigestEnabled(enabled: Boolean) {
         viewModelScope.launch {
             try {
@@ -379,9 +517,14 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     fun refreshAccessAndPermissions() {
         val ctx = getApplication<Application>()
+        val previousAccess = _isNotificationAccessGranted.value
+        val currentAccess = NephoNotificationListener.isListenerEnabled(ctx)
         _hasNotificationPermission.value = LocalPulseNotifier.hasNotificationPermission(ctx)
-        _isNotificationAccessGranted.value = NephoNotificationListener.isListenerEnabled(ctx)
+        _isNotificationAccessGranted.value = currentAccess
         _isIgnoringBatteryOptimizations.value = checkIgnoringBatteryOptimizations(ctx)
+        if (previousAccess != currentAccess) {
+            NephoWidgetUpdater.requestUpdate(ctx)
+        }
     }
 
     fun requestListenerRebind() {

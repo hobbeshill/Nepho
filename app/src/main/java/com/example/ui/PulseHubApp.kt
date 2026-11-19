@@ -30,8 +30,11 @@ import androidx.compose.material.icons.filled.MoreVert
 import androidx.compose.material.icons.filled.RestartAlt
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
+import androidx.compose.material.icons.outlined.Laptop
 import androidx.compose.material.icons.outlined.Link
+import androidx.compose.material.icons.outlined.SystemUpdate
 import androidx.compose.material.icons.outlined.Tune
+import androidx.compose.material.icons.outlined.Widgets
 import androidx.compose.material3.Badge
 import androidx.compose.material3.BadgedBox
 import androidx.compose.material3.DropdownMenu
@@ -81,8 +84,10 @@ import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyanPulse
 import com.example.ui.theme.CyanPulseContainer
 import com.example.ui.theme.EmeraldOk
+import com.example.ui.theme.EmeraldOkContainer
 import com.example.ui.theme.MidnightSurface
 import com.example.ui.theme.ObsidianBackground
+import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -116,6 +121,10 @@ fun NephoApp(
     val openDigest by viewModel.openDigest.collectAsStateWithLifecycle()
     val listenerHealth by viewModel.listenerHealth.collectAsStateWithLifecycle()
     val captureDiagnostics by viewModel.captureDiagnostics.collectAsStateWithLifecycle()
+    val pendingWidgetThreadId by viewModel.pendingWidgetThreadId.collectAsStateWithLifecycle()
+    val updateGithubRepo by viewModel.updateGithubRepo.collectAsStateWithLifecycle()
+    val updateCheckState by viewModel.updateCheckState.collectAsStateWithLifecycle()
+    val webBridgeStatus by viewModel.webBridgeStatus.collectAsStateWithLifecycle()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var menuExpanded by remember { mutableStateOf(false) }
@@ -123,6 +132,8 @@ fun NephoApp(
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
     var showDigestDialog by rememberSaveable { mutableStateOf(false) }
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
+    var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
+    var showWebCompanionDialog by rememberSaveable { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
     var threadTargetId by rememberSaveable { mutableStateOf<String?>(null) }
     val timeFmt = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -131,6 +142,23 @@ fun NephoApp(
         if (openDigest) {
             showDigestDialog = true
             viewModel.clearOpenDigest()
+        }
+    }
+
+    LaunchedEffect(pendingWidgetThreadId, allNotifications) {
+        val targetId = pendingWidgetThreadId ?: return@LaunchedEffect
+        val matching = allNotifications.filter { it.threadId == targetId }
+        if (matching.isNotEmpty()) {
+            threadTargetId = targetId
+            viewModel.markThreadAsRead(matching.filter { !it.isRead }.map { it.key })
+            viewModel.clearPendingWidgetThreadId()
+        }
+    }
+
+    LaunchedEffect(pendingWidgetThreadId) {
+        if (pendingWidgetThreadId != null) {
+            delay(2_500L)
+            viewModel.clearPendingWidgetThreadId()
         }
     }
 
@@ -195,6 +223,38 @@ fun NephoApp(
             onOpenBatterySettings = viewModel::openBatteryOptimizationSettings,
             onClearLog = viewModel::clearCaptureDiagnostics,
             onDismiss = { showDiagnosticsDialog = false }
+        )
+    }
+
+    if (showUpdatesDialog) {
+        val urlCopiedMsg = stringResource(R.string.updates_url_copied)
+        AppUpdatesDialog(
+            savedRepoSlug = updateGithubRepo,
+            updateState = updateCheckState,
+            onCheckUpdates = viewModel::checkForAppUpdates,
+            onOpenUrl = viewModel::openExternalUrl,
+            onCopyReleasesUrl = { url ->
+                viewModel.copyToClipboard("Nepho Releases", url, urlCopiedMsg)
+            },
+            onDismiss = { showUpdatesDialog = false }
+        )
+    }
+
+    if (showWebCompanionDialog) {
+        val urlCopiedMsg = stringResource(R.string.web_bridge_url_copied)
+        val pinCopiedMsg = stringResource(R.string.web_bridge_pin_copied)
+        WebCompanionDialog(
+            status = webBridgeStatus,
+            onToggleBridge = viewModel::toggleWebBridge,
+            onRotatePin = viewModel::rotateWebBridgePin,
+            onCopyUrl = { url ->
+                viewModel.copyToClipboard("Nepho Web Companion URL", url, urlCopiedMsg)
+            },
+            onShareUrl = viewModel::shareWebCompanionUrl,
+            onCopyPin = { pin ->
+                viewModel.copyToClipboard("Nepho Pairing PIN", pin, pinCopiedMsg)
+            },
+            onDismiss = { showWebCompanionDialog = false }
         )
     }
 
@@ -297,6 +357,24 @@ fun NephoApp(
                                             .clip(CircleShape)
                                             .background(healthDotColor)
                                     )
+                                    if (webBridgeStatus.isRunning) {
+                                        Surface(
+                                            shape = RoundedCornerShape(999.dp),
+                                            color = EmeraldOkContainer,
+                                            border = BorderStroke(1.dp, EmeraldOk.copy(alpha = 0.5f)),
+                                            modifier = Modifier
+                                                .clip(RoundedCornerShape(999.dp))
+                                                .clickable { showWebCompanionDialog = true }
+                                                .testTag("top_bar_web_live_pill")
+                                        ) {
+                                            Text(
+                                                text = stringResource(R.string.web_bridge_live_pill),
+                                                style = MaterialTheme.typography.labelSmall,
+                                                color = EmeraldOk,
+                                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 2.dp)
+                                            )
+                                        }
+                                    }
                                 }
                                 val sinceText = timeFmt.format(Date(sessionOpenedAt))
                                 Surface(
@@ -396,6 +474,39 @@ fun NephoApp(
                                             showDiagnosticsDialog = true
                                         },
                                         modifier = Modifier.testTag("menu_capture_diagnostics")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_web_companion)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Laptop, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showWebCompanionDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_web_companion")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_app_updates)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.SystemUpdate, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showUpdatesDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_app_updates")
+                                    )
+                                    DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_add_home_widget)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Widgets, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            viewModel.requestPinHomeWidget()
+                                        },
+                                        modifier = Modifier.testTag("menu_add_home_widget")
                                     )
                                     DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_compose_capture)) },

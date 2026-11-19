@@ -13,11 +13,18 @@ android {
   compileSdk { version = release(36) { minorApiLevel = 1 } }
 
   defaultConfig {
+    val ciVersionCode = (project.findProperty("nephoVersionCode") as? String)?.toIntOrNull() ?: 1
+    val ciVersionName = (project.findProperty("nephoVersionName") as? String)?.takeIf { it.isNotBlank() } ?: "1.0"
+    val ciGithubRepo = (project.findProperty("nephoGithubRepo") as? String)?.trim().orEmpty()
+      .replace("\\", "\\\\")
+      .replace("\"", "\\\"")
+
     applicationId = "com.aistudio.pulsehub.kxmvpq"
     minSdk = 24
     targetSdk = 36
-    versionCode = 1
-    versionName = "1.0"
+    versionCode = ciVersionCode
+    versionName = ciVersionName
+    buildConfigField("String", "DEFAULT_GITHUB_REPO", "\"$ciGithubRepo\"")
 
     testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
   }

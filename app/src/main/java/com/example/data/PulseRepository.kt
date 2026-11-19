@@ -19,6 +19,9 @@ import com.example.data.local.PulseDatabase
 import com.example.data.local.PulseNotificationEntity
 import com.example.data.local.SessionPreferences
 import com.example.notifications.NephoNotificationListener
+import com.example.widget.NephoWidgetSnapshot
+import com.example.widget.NephoWidgetSnapshotBuilder
+import com.example.widget.NephoWidgetUpdater
 import com.example.worker.ReminderWorker
 import kotlinx.coroutines.ExperimentalCoroutinesApi
 import kotlinx.coroutines.flow.Flow
@@ -154,6 +157,17 @@ class PulseRepository private constructor(
         return openedAt
     }
 
+    suspend fun loadWidgetSnapshot(): NephoWidgetSnapshot {
+        val sessionOpenedAt = sessionPreferences.ensureSessionOpenedAt()
+        val effectiveCutoff = maxOf(computeRetentionCutoff(), sessionOpenedAt)
+        val active = dao.getActiveNotificationsSnapshot(effectiveCutoff).map { it.toDomain() }
+        return NephoWidgetSnapshotBuilder.build(
+            activeNotifications = active,
+            sessionOpenedAt = sessionOpenedAt,
+            isNotificationAccessGranted = NephoNotificationListener.isListenerEnabled(appContext)
+        )
+    }
+
     suspend fun purgeExpired(): Int {
         val now = System.currentTimeMillis()
         val cutoff = now - RETENTION_WINDOW_MS
@@ -168,6 +182,7 @@ class PulseRepository private constructor(
                 }
             }
             NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
+            NephoWidgetUpdater.requestUpdate(appContext)
         }
         return removed
     }
@@ -238,6 +253,7 @@ class PulseRepository private constructor(
             )
         )
         val purgedCount = purgeExpired()
+        NephoWidgetUpdater.requestUpdate(appContext)
         return IngestResult(
             extractedLinkCount = linkEntities.size,
             purgedExpiredCount = purgedCount
@@ -251,6 +267,7 @@ class PulseRepository private constructor(
         val existing = dao.getByKey(key) ?: return false
         val next = !existing.isStarred
         dao.setNotificationStarred(key, next)
+        NephoWidgetUpdater.requestUpdate(appContext)
         return next
     }
 
@@ -277,6 +294,7 @@ class PulseRepository private constructor(
 
     suspend fun markAsRead(key: String) {
         dao.markAsRead(key)
+        NephoWidgetUpdater.requestUpdate(appContext)
     }
 
     suspend fun isAppOptedIn(packageName: String): Boolean =
@@ -522,6 +540,7 @@ class PulseRepository private constructor(
         actionHandleMap.remove(key)
         contentIntentMap.remove(key)
         dao.dismissByKey(key)
+        NephoWidgetUpdater.requestUpdate(appContext)
     }
 
     /**
@@ -535,6 +554,7 @@ class PulseRepository private constructor(
         NephoNotificationListener.cancelSystemNotification(key)
         ReminderWorker.cancelReminder(appContext, key)
         dao.dismissByKey(key)
+        NephoWidgetUpdater.requestUpdate(appContext)
         return UndoDismissBatch(
             items = listOf(
                 DismissedItemSnapshot(
@@ -567,6 +587,9 @@ class PulseRepository private constructor(
                 reminderNote = entity.reminderNote
             )
         }
+        if (snapshots.isNotEmpty()) {
+            NephoWidgetUpdater.requestUpdate(appContext)
+        }
         return UndoDismissBatch(items = snapshots, keptStarredCount = keptStarred)
     }
 
@@ -580,11 +603,19 @@ class PulseRepository private constructor(
                 ReminderWorker.scheduleReminder(appContext, snapshot.key, validReminderAt, validNote)
             }
         }
+        if (batch.items.isNotEmpty()) {
+            NephoWidgetUpdater.requestUpdate(appContext)
+        }
         return batch.items.size
     }
 
-    suspend fun markPackageAsRead(packageName: String): Int =
-        dao.markPackageAsRead(packageName)
+    suspend fun markPackageAsRead(packageName: String): Int {
+        val updated = dao.markPackageAsRead(packageName)
+        if (updated > 0) {
+            NephoWidgetUpdater.requestUpdate(appContext)
+        }
+        return updated
+    }
 
     suspend fun executeSecondaryAction(
         key: String,
@@ -630,6 +661,7 @@ class PulseRepository private constructor(
         NotificationImageStore.purgeOrphans(appContext, dao.getAllImageUris().toSet())
         val now = sessionPreferences.resetSessionOpenedAt()
         retentionCutoffTicker.value = now - RETENTION_WINDOW_MS
+        NephoWidgetUpdater.requestUpdate(appContext)
         return now
     }
 

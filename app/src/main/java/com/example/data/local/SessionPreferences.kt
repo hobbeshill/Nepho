@@ -29,6 +29,7 @@ class SessionPreferences(private val context: Context) {
         val DEFAULT_SHADE_MODE = stringPreferencesKey("default_shade_mode")
         val OBSERVED_APPS = stringPreferencesKey("observed_apps_json")
         val OPTED_OUT_APPS = stringPreferencesKey("opted_out_apps_json")
+        val UPDATE_GITHUB_REPO = stringPreferencesKey("update_github_repo")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -58,6 +59,10 @@ class SessionPreferences(private val context: Context) {
     val optedOutAppsFlow: Flow<Set<String>> = context.pulseSessionDataStore.data.map { prefs ->
         decodeStringSet(prefs[Keys.OPTED_OUT_APPS])
     }
+
+    val updateGithubRepoFlow: Flow<String> = context.pulseSessionDataStore.data.map { prefs ->
+        prefs[Keys.UPDATE_GITHUB_REPO].orEmpty()
+    }.distinctUntilChanged()
 
     suspend fun ensureSessionOpenedAt(): Long {
         val current = context.pulseSessionDataStore.data.first()[Keys.SESSION_OPENED_AT]
@@ -137,6 +142,12 @@ class SessionPreferences(private val context: Context) {
         val prefs = context.pulseSessionDataStore.data.first()
         val perApp = decodeShadeModeMap(prefs[Keys.PER_APP_SHADE_MODES])
         return perApp[packageName] ?: parseShadeMode(prefs[Keys.DEFAULT_SHADE_MODE])
+    }
+
+    suspend fun setUpdateGithubRepo(repoSlug: String) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.UPDATE_GITHUB_REPO] = repoSlug.trim()
+        }
     }
 
     private fun parseShadeMode(raw: String?): ShadeMode {

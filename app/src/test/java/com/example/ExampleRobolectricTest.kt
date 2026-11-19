@@ -30,9 +30,22 @@ import com.example.data.local.DigestEventEntity
 import com.example.data.local.DigestSummaryEntity
 import com.example.data.local.PulseDatabase
 import com.example.data.local.PulseNotificationEntity
+import android.view.View
+import android.widget.FrameLayout
+import android.widget.TextView
 import com.example.notifications.NephoNotificationListener
+import com.example.ui.PulseTab
 import com.example.ui.PulseViewModel
+import com.example.updates.GitHubReleaseUpdater
+import com.example.updates.UpdateCheckState
+import com.example.webbridge.NephoWebBridgeServer
+import com.example.widget.NephoUnreadWidgetProvider
+import com.example.widget.NephoWidgetSnapshotBuilder
 import com.example.worker.DigestSchedule
+import org.json.JSONObject
+import java.net.HttpURLConnection
+import java.net.InetAddress
+import java.net.URL
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.async
@@ -1307,6 +1320,347 @@ class ExampleRobolectricTest {
 
         repo.clearCaptureDiagnostics()
         assertTrue(repo.captureDiagnosticsFlow.first().isEmpty())
+    }
+
+    @Test
+    fun `widget snapshot ranks per-app unread counts, deduplicates threads, and prioritizes starred alerts`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        // Messages: 3 unread across 2 threads (Alex thread has 2 messages)
+        ingest(repo, "w_msg_1", SupportedApp.MESSAGES, "Alex", "First ping", now + 100)
+        ingest(repo, "w_msg_2", SupportedApp.MESSAGES, "Alex", "Latest ping from Alex", now + 300)
+        ingest(repo, "w_msg_3", SupportedApp.MESSAGES, "Jordan", "Dinner at 7?", now + 200)
+        // Gmail: 1 unread, starred (older timestamp, but starred so it must rank first)
+        ingest(repo, "w_gmail_star", SupportedApp.GMAIL, "Flight Confirmation", "Gate B12", now + 50)
+        repo.toggleNotificationStar("w_gmail_star")
+        // Twitter: 1 read (must NOT count in unread) + 1 unread
+        ingest(repo, "w_x_read", SupportedApp.TWITTER, "@news", "Already read", now + 400)
+        repo.markAsRead("w_x_read")
+        ingest(repo, "w_x_unread", SupportedApp.TWITTER, "@design", "New mention", now + 500)
+
+        try {
+            val snapshot = repo.loadWidgetSnapshot()
+            assertEquals(5, snapshot.totalUnread)
+
+            // Per-app breakdown: Messages (3) first, then X (1, newer postTime) before Gmail (1, older)
+            assertEquals(3, snapshot.perAppCounts.size)
+            assertEquals(SupportedApp.MESSAGES.packageName, snapshot.perAppCounts[0].packageName)
+            assertEquals(3, snapshot.perAppCounts[0].unreadCount)
+            assertEquals("SM", snapshot.perAppCounts[0].shortBadge)
+            assertEquals(SupportedApp.TWITTER.packageName, snapshot.perAppCounts[1].packageName)
+            assertEquals(1, snapshot.perAppCounts[1].unreadCount)
+            assertEquals(SupportedApp.GMAIL.packageName, snapshot.perAppCounts[2].packageName)
+            assertEquals(1, snapshot.perAppCounts[2].unreadCount)
+
+            // Deduplicated threads: 4 unique threads, starred Gmail first, then newest unread
+            assertEquals(4, snapshot.topUnreadAlerts.size)
+            assertEquals("Flight Confirmation", snapshot.topUnreadAlerts[0].title)
+            assertTrue(snapshot.topUnreadAlerts[0].isStarred)
+            assertEquals("@design", snapshot.topUnreadAlerts[1].title)
+            assertEquals("Alex", snapshot.topUnreadAlerts[2].title)
+            assertEquals("Latest ping from Alex", snapshot.topUnreadAlerts[2].body)
+            assertEquals("Jordan", snapshot.topUnreadAlerts[3].title)
+        } finally {
+            repo.toggleNotificationStar("w_gmail_star")
+            repo.resetSession()
+        }
+    }
+
+    @Test
+    fun `widget RemoteViews adapts to compact and expanded sizes, renders empty state, and launches direct Activity intents`() = runTest {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        ingest(repo, "rv_1", SupportedApp.MESSAGES, "Sam", "See you soon", now + 1_000)
+        ingest(repo, "rv_2", SupportedApp.TWITTER, "@androiddev", "Widget guide", now + 2_000)
+        ingest(repo, "rv_3", SupportedApp.OUTLOOK, "Boss", "Q3 deck", now + 3_000)
+        ingest(repo, "rv_4", SupportedApp.GROUPME, "Crew", "Game at 8", now + 4_000)
+        repo.toggleNotificationStar("rv_1")
+
+        try {
+            val snapshot = repo.loadWidgetSnapshot().copy(
+                isNotificationAccessGranted = true,
+                refreshedAt = now + 65_000
+            )
+
+            // Compact layout: 1 alert row, 2 app pills
+            val compactViews = NephoUnreadWidgetProvider.buildRemoteViews(
+                context = context,
+                snapshot = snapshot,
+                minWidthDp = 190,
+                minHeightDp = 120
+            )
+            val compactRoot = compactViews.apply(context, FrameLayout(context))
+            assertEquals(View.VISIBLE, compactRoot.findViewById<View>(R.id.widget_rows_container).visibility)
+            assertEquals(View.GONE, compactRoot.findViewById<View>(R.id.widget_empty_container).visibility)
+            assertEquals(View.VISIBLE, compactRoot.findViewById<View>(R.id.widget_row_0).visibility)
+            assertEquals(View.GONE, compactRoot.findViewById<View>(R.id.widget_row_1).visibility)
+            assertEquals(View.VISIBLE, compactRoot.findViewById<View>(R.id.widget_app_pill_0).visibility)
+            assertEquals(View.VISIBLE, compactRoot.findViewById<View>(R.id.widget_app_pill_1).visibility)
+            assertEquals(View.GONE, compactRoot.findViewById<View>(R.id.widget_app_pill_2).visibility)
+            assertEquals("4 unread", compactRoot.findViewById<TextView>(R.id.widget_unread_count_pill).text.toString())
+
+            // Expanded layout: all 4 rows and 4 app pills visible, starred prefix rendered on row 0
+            val expandedViews = NephoUnreadWidgetProvider.buildRemoteViews(
+                context = context,
+                snapshot = snapshot,
+                minWidthDp = 300,
+                minHeightDp = 300
+            )
+            val expandedRoot = expandedViews.apply(context, FrameLayout(context))
+            assertEquals(View.VISIBLE, expandedRoot.findViewById<View>(R.id.widget_row_3).visibility)
+            assertEquals(View.VISIBLE, expandedRoot.findViewById<View>(R.id.widget_app_pill_3).visibility)
+            assertEquals("★ Sam", expandedRoot.findViewById<TextView>(R.id.widget_row_0_title).text.toString())
+
+            // Tap row 0 -> direct Activity intent with EXTRA_WIDGET_THREAD_ID
+            val shadowApp = shadowOf(ApplicationProvider.getApplicationContext<android.app.Application>())
+            expandedRoot.findViewById<View>(R.id.widget_row_0).performClick()
+            val rowLaunch = shadowApp.nextStartedActivity
+            assertNotNull(rowLaunch)
+            assertEquals(MainActivity::class.java.name, rowLaunch.component?.className)
+            assertEquals(snapshot.topUnreadAlerts[0].threadId, rowLaunch.getStringExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID))
+
+            // Tap app pill 0 -> direct Activity intent with EXTRA_WIDGET_APP_PACKAGE & EXTRA_WIDGET_UNREAD_ONLY
+            expandedRoot.findViewById<View>(R.id.widget_app_pill_0).performClick()
+            val pillLaunch = shadowApp.nextStartedActivity
+            assertNotNull(pillLaunch)
+            assertEquals(MainActivity::class.java.name, pillLaunch.component?.className)
+            assertEquals(snapshot.perAppCounts[0].packageName, pillLaunch.getStringExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE))
+            assertTrue(pillLaunch.getBooleanExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_UNREAD_ONLY, false))
+
+            // Empty snapshot with Notification Access off
+            val emptySnapshot = NephoWidgetSnapshotBuilder.build(
+                activeNotifications = emptyList(),
+                sessionOpenedAt = now,
+                isNotificationAccessGranted = false,
+                refreshedAt = now
+            )
+            val emptyViews = NephoUnreadWidgetProvider.buildRemoteViews(context, emptySnapshot)
+            val emptyRoot = emptyViews.apply(context, FrameLayout(context))
+            assertEquals(View.GONE, emptyRoot.findViewById<View>(R.id.widget_rows_container).visibility)
+            assertEquals(View.VISIBLE, emptyRoot.findViewById<View>(R.id.widget_empty_container).visibility)
+            assertEquals(context.getString(R.string.widget_all_clear), emptyRoot.findViewById<TextView>(R.id.widget_unread_count_pill).text.toString())
+            assertEquals(context.getString(R.string.widget_access_off), emptyRoot.findViewById<TextView>(R.id.widget_empty_subtitle).text.toString())
+        } finally {
+            repo.toggleNotificationStar("rv_1")
+            repo.resetSession()
+        }
+    }
+
+    @Test
+    fun `PulseViewModel routes widget thread deep links and per-app filters accurately`() {
+        val app = ApplicationProvider.getApplicationContext<android.app.Application>()
+        val vm = PulseViewModel(app)
+
+        vm.selectTab(PulseTab.LINKS_VAULT)
+        vm.applyAppFilterFromWidget(
+            packageName = SupportedApp.MESSAGES.packageName,
+            appLabel = "Messages",
+            unreadOnly = true
+        )
+        assertEquals(PulseTab.FEED, vm.selectedTab.value)
+        assertEquals(SupportedApp.MESSAGES, vm.selectedAppFilter.value)
+        assertTrue(vm.unreadOnly.value)
+        assertEquals("", vm.searchQuery.value)
+
+        // Third-party app pill falls back to appLabel search query with unreadOnly enabled
+        vm.applyAppFilterFromWidget(
+            packageName = "com.slack",
+            appLabel = "Slack",
+            unreadOnly = true
+        )
+        assertEquals(null, vm.selectedAppFilter.value)
+        assertEquals("Slack", vm.searchQuery.value)
+        assertTrue(vm.unreadOnly.value)
+
+        // Thread deep link resets filters and publishes pendingWidgetThreadId
+        val targetThread = "${SupportedApp.TWITTER.packageName}|@designweekly"
+        vm.openThreadFromWidget(targetThread)
+        assertEquals(PulseTab.FEED, vm.selectedTab.value)
+        assertEquals(null, vm.selectedAppFilter.value)
+        assertFalse(vm.unreadOnly.value)
+        assertEquals("", vm.searchQuery.value)
+        assertEquals(targetThread, vm.pendingWidgetThreadId.value)
+
+        vm.clearPendingWidgetThreadId()
+        assertEquals(null, vm.pendingWidgetThreadId.value)
+    }
+
+    @Test
+    fun `GitHubReleaseUpdater normalizes repo slugs, compares versions, and parses APK release JSON`() {
+        assertEquals("octocat/nepho", GitHubReleaseUpdater.normalizeRepoSlug("octocat/nepho"))
+        assertEquals("octocat/nepho", GitHubReleaseUpdater.normalizeRepoSlug("https://github.com/octocat/nepho/releases"))
+        assertEquals("octocat/nepho", GitHubReleaseUpdater.normalizeRepoSlug("github.com/octocat/nepho.git"))
+        assertEquals(null, GitHubReleaseUpdater.normalizeRepoSlug("not a repo"))
+
+        assertTrue(GitHubReleaseUpdater.compareVersions("v1.0.1", "1.0") > 0)
+        assertTrue(GitHubReleaseUpdater.compareVersions("v1.0.10", "v1.0.2") > 0)
+        assertEquals(0, GitHubReleaseUpdater.compareVersions("v1.0.4", "1.0.4"))
+        assertTrue(GitHubReleaseUpdater.compareVersions("v1.0.3", "1.0.4") < 0)
+
+        val releaseJson = """
+            {
+              "tag_name": "v1.0.5",
+              "name": "Nepho 1.0.5",
+              "body": "- Added home widget\n- Added web companion",
+              "html_url": "https://github.com/octocat/nepho/releases/tag/v1.0.5",
+              "published_at": "2026-11-19T18:00:00Z",
+              "assets": [
+                {
+                  "name": "nepho-debug.apk",
+                  "browser_download_url": "https://github.com/octocat/nepho/releases/download/v1.0.5/nepho-debug.apk"
+                }
+              ]
+            }
+        """.trimIndent()
+
+        val available = GitHubReleaseUpdater.parseLatestReleaseJson(
+            jsonText = releaseJson,
+            currentVersionName = "1.0",
+            repoSlug = "octocat/nepho"
+        )
+        assertTrue(available is UpdateCheckState.UpdateAvailable)
+        val update = available as UpdateCheckState.UpdateAvailable
+        assertEquals("v1.0.5", update.latestTag)
+        assertEquals(
+            "https://github.com/octocat/nepho/releases/download/v1.0.5/nepho-debug.apk",
+            update.downloadUrl
+        )
+        assertTrue(update.releaseNotes.contains("Added web companion"))
+
+        val upToDate = GitHubReleaseUpdater.parseLatestReleaseJson(
+            jsonText = releaseJson,
+            currentVersionName = "1.0.5",
+            repoSlug = "octocat/nepho"
+        )
+        assertTrue(upToDate is UpdateCheckState.UpToDate)
+    }
+
+    @Test
+    fun `NephoWebBridgeServer enforces PIN auth, serves state, mutates notifications, and revokes tokens on PIN rotation`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+
+        val now = System.currentTimeMillis()
+        ingest(
+            repo = repo,
+            key = "wb_msg_1",
+            app = SupportedApp.MESSAGES,
+            title = "Alex",
+            body = "Check https://example.com/nepho",
+            postTime = now + 100,
+            canReply = true
+        )
+        ingest(
+            repo = repo,
+            key = "wb_mail_1",
+            app = SupportedApp.GMAIL,
+            title = "Receipt",
+            body = "Order #42",
+            postTime = now + 200,
+            canReply = false
+        )
+
+        val server = NephoWebBridgeServer(
+            repository = repo,
+            htmlProvider = { "<!doctype html><html><title>Nepho Web Companion</title></html>" },
+            requestedPort = 0,
+            bindAddress = InetAddress.getLoopbackAddress()
+        )
+        val port = server.start()
+        try {
+            fun httpCall(
+                method: String,
+                path: String,
+                token: String? = null,
+                body: String? = null
+            ): Pair<Int, String> {
+                val conn = (URL("http://127.0.0.1:$port$path").openConnection() as HttpURLConnection).apply {
+                    requestMethod = method
+                    connectTimeout = 3_000
+                    readTimeout = 3_000
+                    if (token != null) setRequestProperty("Authorization", "Bearer $token")
+                    if (body != null) {
+                        doOutput = true
+                        setRequestProperty("Content-Type", "application/json")
+                        outputStream.use { it.write(body.toByteArray(Charsets.UTF_8)) }
+                    }
+                }
+                val code = conn.responseCode
+                val stream = if (code in 200..299) conn.inputStream else conn.errorStream
+                val text = stream?.bufferedReader(Charsets.UTF_8)?.use { it.readText() }.orEmpty()
+                conn.disconnect()
+                return code to text
+            }
+
+            // 1. Companion HTML is served at /
+            val (htmlCode, htmlBody) = httpCall("GET", "/")
+            assertEquals(200, htmlCode)
+            assertTrue(htmlBody.contains("Nepho Web Companion"))
+
+            // 2. Unauthenticated state request is rejected
+            val (unauthCode, _) = httpCall("GET", "/api/state")
+            assertEquals(401, unauthCode)
+
+            // 3. Wrong PIN is rejected; correct PIN returns bearer token
+            val (badPinCode, _) = httpCall("POST", "/api/auth", body = """{"pin":"000000"}""")
+            if (server.pairingPin != "000000") {
+                assertEquals(401, badPinCode)
+            }
+            val (authCode, authBody) = httpCall("POST", "/api/auth", body = """{"pin":"${server.pairingPin}"}""")
+            assertEquals(200, authCode)
+            val token = JSONObject(authBody).getString("token")
+            assertTrue(token.isNotBlank())
+
+            // 4. Authenticated /api/state returns notifications and extracted links
+            val (stateCode, stateBody) = httpCall("GET", "/api/state", token = token)
+            assertEquals(200, stateCode)
+            val stateJson = JSONObject(stateBody)
+            assertEquals(2, stateJson.getInt("unreadTotal"))
+            assertEquals(2, stateJson.getJSONArray("notifications").length())
+            assertEquals(1, stateJson.getJSONArray("links").length())
+
+            // 5. Mark read, star, reply, and dismiss mutate PulseRepository
+            val (readCode, _) = httpCall("POST", "/api/mark-read", token = token, body = """{"key":"wb_mail_1"}""")
+            assertEquals(200, readCode)
+            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isRead)
+
+            val (starCode, starBody) = httpCall("POST", "/api/star", token = token, body = """{"key":"wb_mail_1"}""")
+            assertEquals(200, starCode)
+            assertTrue(JSONObject(starBody).getBoolean("isStarred"))
+            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isStarred)
+
+            val (replyCode, _) = httpCall("POST", "/api/reply", token = token, body = """{"key":"wb_msg_1","text":"On my way!"}""")
+            assertEquals(200, replyCode)
+            val replied = repo.getNotificationByKey("wb_msg_1")!!
+            assertTrue(replied.isDismissed)
+            assertTrue(replied.repliesJson.contains("On my way!"))
+
+            val (dismissCode, _) = httpCall("POST", "/api/dismiss", token = token, body = """{"key":"wb_mail_1"}""")
+            assertEquals(200, dismissCode)
+            assertTrue(repo.getNotificationByKey("wb_mail_1")!!.isDismissed)
+
+            // 6. Rotating PIN immediately revokes existing session token
+            val oldPin = server.pairingPin
+            val newPin = server.rotatePin()
+            assertEquals(6, newPin.length)
+            val (revokedCode, _) = httpCall("GET", "/api/state", token = token)
+            assertEquals(401, revokedCode)
+            // Ensure unstarred cleanup
+            if (oldPin == newPin) {
+                assertEquals(6, oldPin.length)
+            }
+        } finally {
+            server.stop()
+            repo.toggleNotificationStar("wb_mail_1")
+            repo.resetSession()
+        }
     }
 }
 

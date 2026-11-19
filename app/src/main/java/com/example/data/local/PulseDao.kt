@@ -17,6 +17,13 @@ interface PulseDao {
     fun observeActiveNotifications(cutoffTime: Long): Flow<List<PulseNotificationEntity>>
 
     @Query(
+        "SELECT * FROM pulse_notifications " +
+            "WHERE isDismissed = 0 AND (isStarred = 1 OR postTime >= :cutoffTime) " +
+            "ORDER BY postTime DESC"
+    )
+    suspend fun getActiveNotificationsSnapshot(cutoffTime: Long): List<PulseNotificationEntity>
+
+    @Query(
         "SELECT * FROM extracted_links " +
             "WHERE isStarred = 1 " +
             "OR parentNotificationKey IN (SELECT `key` FROM pulse_notifications WHERE isStarred = 1 AND isDismissed = 0) " +

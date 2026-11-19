@@ -19,6 +19,7 @@ import com.example.data.SupportedApp
 import com.example.ui.NephoApp
 import com.example.ui.PulseViewModel
 import com.example.ui.theme.NephoTheme
+import com.example.widget.NephoUnreadWidgetProvider
 
 class MainActivity : ComponentActivity() {
 
@@ -33,6 +34,7 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleIncomingShareIntent(intent)
         handleDigestIntent(intent)
+        handleWidgetIntent(intent)
 
         setContent {
             NephoTheme {
@@ -85,12 +87,36 @@ class MainActivity : ComponentActivity() {
         setIntent(intent)
         handleIncomingShareIntent(intent)
         handleDigestIntent(intent)
+        handleWidgetIntent(intent)
     }
 
     private fun handleDigestIntent(intent: Intent?) {
         if (intent?.getBooleanExtra("open_digest", false) == true) {
             viewModel.requestOpenDigest()
             intent.removeExtra("open_digest")
+        }
+    }
+
+    private fun handleWidgetIntent(intent: Intent?) {
+        if (intent == null) return
+        val threadId = intent.getStringExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID)
+        if (!threadId.isNullOrBlank()) {
+            viewModel.openThreadFromWidget(threadId)
+            intent.removeExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID)
+            return
+        }
+        val appPackage = intent.getStringExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE)
+        if (!appPackage.isNullOrBlank()) {
+            val appLabel = intent.getStringExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_LABEL)
+            val unreadOnly = intent.getBooleanExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_UNREAD_ONLY, true)
+            viewModel.applyAppFilterFromWidget(
+                packageName = appPackage,
+                appLabel = appLabel,
+                unreadOnly = unreadOnly
+            )
+            intent.removeExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE)
+            intent.removeExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_LABEL)
+            intent.removeExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_UNREAD_ONLY)
         }
     }
 

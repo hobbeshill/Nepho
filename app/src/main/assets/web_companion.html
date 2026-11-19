@@ -1,0 +1,1212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Nepho Web Companion</title>
+  <style>
+    :root {
+      --bg: #090D16;
+      --surface: #111827;
+      --elevated: #172033;
+      --high: #1F2B42;
+      --border: #283752;
+      --cyan: #22D3EE;
+      --cyan-bg: #083344;
+      --emerald: #34D399;
+      --emerald-bg: #064E3B;
+      --amber: #FBBF24;
+      --amber-bg: #451A03;
+      --crimson: #F87171;
+      --crimson-bg: #450A0A;
+      --text: #F1F5F9;
+      --text-2: #94A3B8;
+      --muted: #64748B;
+      --radius: 14px;
+    }
+    * { box-sizing: border-box; }
+    html, body {
+      margin: 0;
+      padding: 0;
+      height: 100%;
+      background: var(--bg);
+      color: var(--text);
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Inter, sans-serif;
+      -webkit-font-smoothing: antialiased;
+    }
+    button, input, textarea {
+      font: inherit;
+      color: inherit;
+    }
+    .hidden { display: none !important; }
+
+    /* PIN Auth Gate */
+    #auth-screen {
+      min-height: 100%;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 24px;
+      background: radial-gradient(circle at top, rgba(34,211,238,0.12), transparent 55%), var(--bg);
+    }
+    .auth-card {
+      width: 100%;
+      max-width: 400px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 20px;
+      padding: 28px;
+      box-shadow: 0 24px 60px rgba(0,0,0,0.45);
+    }
+    .brand-row {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      margin-bottom: 16px;
+    }
+    .brand-mark {
+      width: 36px;
+      height: 36px;
+      border-radius: 10px;
+      background: var(--cyan-bg);
+      border: 1px solid rgba(34,211,238,0.45);
+      color: var(--cyan);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-weight: 800;
+      font-size: 18px;
+    }
+    .auth-title {
+      margin: 0;
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .auth-sub {
+      margin: 0 0 18px;
+      color: var(--text-2);
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .pin-input {
+      width: 100%;
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 14px 16px;
+      font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+      font-size: 22px;
+      letter-spacing: 6px;
+      text-align: center;
+      outline: none;
+    }
+    .pin-input:focus { border-color: var(--cyan); }
+    .btn-primary {
+      background: var(--cyan);
+      color: #06131C;
+      border: none;
+      border-radius: 12px;
+      padding: 12px 18px;
+      font-weight: 700;
+      cursor: pointer;
+      transition: opacity 0.15s;
+    }
+    .btn-primary:hover { opacity: 0.92; }
+    .btn-primary:disabled { opacity: 0.45; cursor: not-allowed; }
+    .btn-ghost {
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .btn-ghost:hover { background: var(--high); }
+    .btn-danger {
+      background: var(--crimson-bg);
+      border: 1px solid rgba(248,113,113,0.45);
+      color: var(--crimson);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .auth-btn { width: 100%; margin-top: 14px; }
+    .error-banner {
+      margin-top: 12px;
+      padding: 10px 12px;
+      border-radius: 10px;
+      background: var(--crimson-bg);
+      border: 1px solid rgba(248,113,113,0.4);
+      color: var(--crimson);
+      font-size: 13px;
+    }
+
+    /* Main Workspace */
+    #app-screen {
+      display: flex;
+      flex-direction: column;
+      height: 100%;
+    }
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      gap: 12px;
+      justify-content: space-between;
+    }
+    .header-left, .header-right {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 5px 10px;
+      border-radius: 999px;
+      font-size: 12px;
+      font-weight: 600;
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+    }
+    .pill-live {
+      background: var(--emerald-bg);
+      border-color: rgba(52,211,153,0.45);
+      color: var(--emerald);
+    }
+    .pill-warn {
+      background: var(--amber-bg);
+      border-color: rgba(251,191,36,0.45);
+      color: var(--amber);
+    }
+    .pill-cyan {
+      background: var(--cyan-bg);
+      border-color: rgba(34,211,238,0.45);
+      color: var(--cyan);
+    }
+    .dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: currentColor;
+    }
+    .tab-group {
+      display: inline-flex;
+      background: var(--bg);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 3px;
+      gap: 3px;
+    }
+    .tab-btn {
+      background: transparent;
+      border: none;
+      color: var(--text-2);
+      padding: 7px 14px;
+      border-radius: 9px;
+      font-size: 13px;
+      font-weight: 600;
+      cursor: pointer;
+    }
+    .tab-btn.active {
+      background: var(--cyan-bg);
+      color: var(--cyan);
+    }
+    .search-input {
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      padding: 8px 12px;
+      font-size: 13px;
+      min-width: 220px;
+      outline: none;
+    }
+    .search-input:focus { border-color: var(--cyan); }
+
+    .filter-bar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      padding: 10px 20px;
+      background: var(--bg);
+      border-bottom: 1px solid var(--border);
+      overflow-x: auto;
+    }
+    .chip {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      color: var(--text-2);
+      border-radius: 999px;
+      padding: 6px 12px;
+      font-size: 12px;
+      font-weight: 600;
+      cursor: pointer;
+      white-space: nowrap;
+    }
+    .chip.active {
+      background: var(--cyan-bg);
+      border-color: rgba(34,211,238,0.55);
+      color: var(--cyan);
+    }
+
+    main {
+      flex: 1;
+      min-height: 0;
+      display: flex;
+    }
+    #feed-view {
+      flex: 1;
+      display: grid;
+      grid-template-columns: minmax(300px, 410px) 1fr;
+      min-height: 0;
+    }
+    .thread-list {
+      border-right: 1px solid var(--border);
+      overflow-y: auto;
+      padding: 12px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .thread-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 12px;
+      cursor: pointer;
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+      transition: background 0.12s, border-color 0.12s;
+    }
+    .thread-card:hover { background: var(--elevated); }
+    .thread-card.selected {
+      background: var(--elevated);
+      border-color: var(--cyan);
+    }
+    .app-badge {
+      width: 34px;
+      height: 34px;
+      border-radius: 10px;
+      background: var(--high);
+      border: 1px solid var(--border);
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 800;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+    }
+    .thread-meta {
+      flex: 1;
+      min-width: 0;
+    }
+    .thread-top {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+    .thread-title {
+      font-weight: 700;
+      font-size: 14px;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+    .thread-time {
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+      font-size: 11px;
+      color: var(--muted);
+      flex-shrink: 0;
+    }
+    .thread-body {
+      margin-top: 4px;
+      color: var(--text-2);
+      font-size: 13px;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+    .thread-tags {
+      margin-top: 6px;
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+      color: var(--muted);
+    }
+    .unread-dot {
+      width: 8px;
+      height: 8px;
+      border-radius: 50%;
+      background: var(--cyan);
+      display: inline-block;
+    }
+    .star-tag { color: var(--amber); font-weight: 700; }
+
+    /* Detail Pane */
+    .detail-pane {
+      display: flex;
+      flex-direction: column;
+      min-height: 0;
+      background: var(--bg);
+    }
+    .detail-header {
+      padding: 16px 20px;
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+    }
+    .detail-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+    }
+    .messages-scroll {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+      display: flex;
+      flex-direction: column;
+      gap: 12px;
+    }
+    .msg-bubble {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 14px 16px;
+      max-width: 720px;
+    }
+    .msg-bubble.reply {
+      align-self: flex-end;
+      background: var(--cyan-bg);
+      border-color: rgba(34,211,238,0.45);
+    }
+    .msg-text {
+      white-space: pre-wrap;
+      word-break: break-word;
+      font-size: 14px;
+      line-height: 1.5;
+    }
+    .msg-footer {
+      margin-top: 8px;
+      font-size: 11px;
+      color: var(--muted);
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .link-chip-row {
+      margin-top: 10px;
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+    .link-chip {
+      display: inline-block;
+      padding: 5px 10px;
+      border-radius: 8px;
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      color: var(--cyan);
+      font-size: 12px;
+      text-decoration: none;
+      max-width: 100%;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      white-space: nowrap;
+    }
+    .composer {
+      padding: 14px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      display: flex;
+      gap: 10px;
+      align-items: flex-end;
+    }
+    .composer textarea {
+      flex: 1;
+      resize: none;
+      min-height: 44px;
+      max-height: 140px;
+      background: var(--elevated);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-size: 14px;
+      outline: none;
+    }
+    .composer textarea:focus { border-color: var(--cyan); }
+    .composer-note {
+      padding: 12px 20px;
+      background: var(--surface);
+      border-top: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 13px;
+    }
+
+    /* Vault View */
+    #vault-view {
+      flex: 1;
+      overflow-y: auto;
+      padding: 20px;
+    }
+    .vault-grid {
+      max-width: 1040px;
+      margin: 0 auto;
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+      gap: 12px;
+    }
+    .vault-card {
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: var(--radius);
+      padding: 16px;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+    }
+    .vault-domain {
+      color: var(--cyan);
+      font-weight: 700;
+      font-size: 14px;
+    }
+    .vault-url {
+      color: var(--text-2);
+      font-size: 12px;
+      word-break: break-all;
+      font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+    }
+    .empty-state {
+      margin: auto;
+      text-align: center;
+      padding: 40px 24px;
+      color: var(--text-2);
+      max-width: 380px;
+    }
+    .empty-state h3 {
+      margin: 0 0 8px;
+      color: var(--text);
+    }
+    #toast {
+      position: fixed;
+      right: 20px;
+      bottom: 20px;
+      background: var(--elevated);
+      border: 1px solid var(--cyan);
+      color: var(--text);
+      padding: 10px 16px;
+      border-radius: 12px;
+      font-size: 13px;
+      font-weight: 600;
+      box-shadow: 0 12px 30px rgba(0,0,0,0.45);
+      z-index: 99;
+    }
+
+    @media (max-width: 820px) {
+      #feed-view { grid-template-columns: 1fr; }
+      .thread-list { max-height: 44vh; border-right: none; border-bottom: 1px solid var(--border); }
+    }
+  </style>
+</head>
+<body>
+  <section id="auth-screen">
+    <div class="auth-card">
+      <div class="brand-row">
+        <div class="brand-mark">N</div>
+        <div>
+          <h1 class="auth-title">Nepho Web Companion</h1>
+          <div style="font-size:12px;color:var(--text-2)">Local Wi-Fi Phone Bridge</div>
+        </div>
+      </div>
+      <p class="auth-sub">Enter the 6-digit pairing PIN shown in Nepho on your phone to view alerts, Links Vault, and send replies over your local Wi-Fi.</p>
+      <form id="auth-form">
+        <input id="pin-input" class="pin-input" type="text" inputmode="numeric" maxlength="7" autocomplete="off" placeholder="000 000" required />
+        <button id="auth-submit" class="btn-primary auth-btn" type="submit">Unlock Session</button>
+        <div id="auth-error" class="error-banner hidden"></div>
+      </form>
+    </div>
+  </section>
+
+  <section id="app-screen" class="hidden">
+    <header>
+      <div class="header-left">
+        <div class="brand-mark">N</div>
+        <div>
+          <div style="font-weight:700;font-size:16px">Nepho</div>
+          <div id="session-since" style="font-size:11px;color:var(--muted);font-family:ui-monospace,monospace">Active session</div>
+        </div>
+        <span id="live-pill" class="pill pill-live"><span class="dot"></span><span id="live-label">Live</span></span>
+        <span id="unread-pill" class="pill pill-cyan">0 unread</span>
+      </div>
+      <div class="header-right">
+        <div class="tab-group">
+          <button id="tab-feed" class="tab-btn active" type="button">Feed</button>
+          <button id="tab-vault" class="tab-btn" type="button">Links Vault</button>
+        </div>
+        <input id="search-input" class="search-input" type="search" placeholder="Search messages, apps, links..." />
+        <button id="lock-btn" class="btn-ghost" type="button">Lock</button>
+      </div>
+    </header>
+
+    <div id="filter-bar" class="filter-bar"></div>
+
+    <main>
+      <div id="feed-view">
+        <div id="thread-list" class="thread-list"></div>
+        <div id="detail-pane" class="detail-pane"></div>
+      </div>
+      <div id="vault-view" class="hidden">
+        <div id="vault-grid" class="vault-grid"></div>
+      </div>
+    </main>
+  </section>
+
+  <div id="toast" class="hidden"></div>
+
+  <script>
+    (function () {
+      const APP_COLORS = {
+        "com.microsoft.office.outlook": "#38BDF8",
+        "com.google.android.gm": "#F87171",
+        "com.groupme.android": "#00AFF0",
+        "com.teamsnap.teamsnap": "#FB923C",
+        "com.google.android.apps.messaging": "#34D399",
+        "com.twitter.android": "#93C5FD"
+      };
+
+      const state = {
+        token: sessionStorage.getItem("nepho_bridge_token") || "",
+        tab: "feed",
+        search: "",
+        appFilter: null,
+        unreadOnly: false,
+        starredOnly: false,
+        hasLinksOnly: false,
+        selectedThreadId: null,
+        data: { sessionOpenedAt: Date.now(), unreadTotal: 0, notifications: [], links: [] },
+        eventSource: null
+      };
+
+      const elAuth = document.getElementById("auth-screen");
+      const elApp = document.getElementById("app-screen");
+      const elPinInput = document.getElementById("pin-input");
+      const elAuthError = document.getElementById("auth-error");
+      const elAuthForm = document.getElementById("auth-form");
+      const elLivePill = document.getElementById("live-pill");
+      const elLiveLabel = document.getElementById("live-label");
+      const elUnreadPill = document.getElementById("unread-pill");
+      const elSessionSince = document.getElementById("session-since");
+      const elTabFeed = document.getElementById("tab-feed");
+      const elTabVault = document.getElementById("tab-vault");
+      const elSearch = document.getElementById("search-input");
+      const elFilterBar = document.getElementById("filter-bar");
+      const elFeedView = document.getElementById("feed-view");
+      const elVaultView = document.getElementById("vault-view");
+      const elThreadList = document.getElementById("thread-list");
+      const elDetailPane = document.getElementById("detail-pane");
+      const elVaultGrid = document.getElementById("vault-grid");
+      const elToast = document.getElementById("toast");
+
+      let toastTimer = null;
+      function showToast(msg) {
+        elToast.textContent = msg;
+        elToast.classList.remove("hidden");
+        clearTimeout(toastTimer);
+        toastTimer = setTimeout(() => elToast.classList.add("hidden"), 2800);
+      }
+
+      function formatTime(ms) {
+        try {
+          return new Date(ms).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit" });
+        } catch (_) {
+          return "";
+        }
+      }
+
+      function formatRelative(ms) {
+        const mins = Math.max(0, Math.floor((Date.now() - ms) / 60000));
+        if (mins < 1) return "now";
+        if (mins < 60) return mins + "m";
+        if (mins < 1440) return Math.floor(mins / 60) + "h";
+        return Math.floor(mins / 1440) + "d";
+      }
+
+      function safeHref(url) {
+        try {
+          const parsed = new URL(url);
+          if (parsed.protocol === "http:" || parsed.protocol === "https:") return parsed.href;
+        } catch (_) {}
+        return null;
+      }
+
+      function lockSession(message) {
+        if (state.eventSource) {
+          state.eventSource.close();
+          state.eventSource = null;
+        }
+        state.token = "";
+        sessionStorage.removeItem("nepho_bridge_token");
+        elApp.classList.add("hidden");
+        elAuth.classList.remove("hidden");
+        elPinInput.value = "";
+        if (message) {
+          elAuthError.textContent = message;
+          elAuthError.classList.remove("hidden");
+        } else {
+          elAuthError.classList.add("hidden");
+        }
+        elPinInput.focus();
+      }
+
+      async function apiPost(path, payload) {
+        const res = await fetch(path, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/json",
+            "Authorization": "Bearer " + state.token
+          },
+          body: JSON.stringify(payload)
+        });
+        if (res.status === 401) {
+          lockSession("Session expired or PIN rotated on your phone.");
+          return null;
+        }
+        return res.json();
+      }
+
+      async function loadInitialState() {
+        const res = await fetch("/api/state", {
+          headers: { "Authorization": "Bearer " + state.token }
+        });
+        if (res.status === 401) {
+          lockSession("Session expired. Enter the current 6-digit PIN from your phone.");
+          return false;
+        }
+        state.data = await res.json();
+        renderAll();
+        return true;
+      }
+
+      function connectSse() {
+        if (state.eventSource) state.eventSource.close();
+        const es = new EventSource("/api/events?token=" + encodeURIComponent(state.token));
+        state.eventSource = es;
+        es.onopen = function () {
+          elLivePill.className = "pill pill-live";
+          elLiveLabel.textContent = "Live";
+        };
+        es.addEventListener("state", function (event) {
+          try {
+            state.data = JSON.parse(event.data);
+            renderAll();
+          } catch (_) {}
+        });
+        es.onerror = function () {
+          elLivePill.className = "pill pill-warn";
+          elLiveLabel.textContent = "Reconnecting…";
+        };
+      }
+
+      async function enterApp() {
+        elAuth.classList.add("hidden");
+        elApp.classList.remove("hidden");
+        const ok = await loadInitialState();
+        if (ok) connectSse();
+      }
+
+      elAuthForm.addEventListener("submit", async function (e) {
+        e.preventDefault();
+        elAuthError.classList.add("hidden");
+        const pin = elPinInput.value.replace(/\s+/g, "");
+        try {
+          const res = await fetch("/api/auth", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ pin })
+          });
+          const body = await res.json();
+          if (!res.ok || !body.token) {
+            elAuthError.textContent = body.error || "Incorrect PIN.";
+            elAuthError.classList.remove("hidden");
+            return;
+          }
+          state.token = body.token;
+          sessionStorage.setItem("nepho_bridge_token", body.token);
+          await enterApp();
+        } catch (_) {
+          elAuthError.textContent = "Could not reach Nepho on your phone. Verify both devices are on the same Wi-Fi.";
+          elAuthError.classList.remove("hidden");
+        }
+      });
+
+      document.getElementById("lock-btn").addEventListener("click", () => lockSession(""));
+      elTabFeed.addEventListener("click", () => { state.tab = "feed"; renderAll(); });
+      elTabVault.addEventListener("click", () => { state.tab = "vault"; renderAll(); });
+      elSearch.addEventListener("input", (e) => { state.search = e.target.value; renderAll(); });
+
+      function groupThreads(notifications) {
+        const map = new Map();
+        for (const item of notifications) {
+          const list = map.get(item.threadId) || [];
+          list.push(item);
+          map.set(item.threadId, list);
+        }
+        const threads = [];
+        for (const [threadId, items] of map.entries()) {
+          items.sort((a, b) => a.postTime - b.postTime);
+          const latest = items[items.length - 1];
+          threads.push({
+            threadId,
+            items,
+            latest,
+            hasUnread: items.some(i => !i.isRead),
+            isStarred: items.some(i => i.isStarred),
+            hasLinks: items.some(i => (i.urls || []).length > 0)
+          });
+        }
+        threads.sort((a, b) => {
+          if (a.isStarred !== b.isStarred) return a.isStarred ? -1 : 1;
+          return b.latest.postTime - a.latest.postTime;
+        });
+        return threads;
+      }
+
+      function renderFilterBar() {
+        elFilterBar.textContent = "";
+        if (state.tab !== "feed") {
+          elFilterBar.classList.add("hidden");
+          return;
+        }
+        elFilterBar.classList.remove("hidden");
+
+        const notifications = state.data.notifications || [];
+        const appCounts = new Map();
+        for (const n of notifications) {
+          const cur = appCounts.get(n.packageName) || { label: n.appLabel, unread: 0, total: 0 };
+          cur.total += 1;
+          if (!n.isRead) cur.unread += 1;
+          appCounts.set(n.packageName, cur);
+        }
+
+        function addChip(label, active, onClick) {
+          const btn = document.createElement("button");
+          btn.type = "button";
+          btn.className = "chip" + (active ? " active" : "");
+          btn.textContent = label;
+          btn.addEventListener("click", onClick);
+          elFilterBar.appendChild(btn);
+        }
+
+        addChip("All Apps (" + notifications.length + ")", state.appFilter === null, () => {
+          state.appFilter = null; renderAll();
+        });
+        addChip("Unread Only", state.unreadOnly, () => {
+          state.unreadOnly = !state.unreadOnly; renderAll();
+        });
+        addChip("Starred", state.starredOnly, () => {
+          state.starredOnly = !state.starredOnly; renderAll();
+        });
+        addChip("Has Links", state.hasLinksOnly, () => {
+          state.hasLinksOnly = !state.hasLinksOnly; renderAll();
+        });
+
+        for (const [pkg, info] of appCounts.entries()) {
+          const suffix = info.unread > 0 ? " (" + info.unread + ")" : "";
+          addChip(info.label + suffix, state.appFilter === pkg, () => {
+            state.appFilter = state.appFilter === pkg ? null : pkg;
+            renderAll();
+          });
+        }
+      }
+
+      function renderFeed() {
+        const q = state.search.trim().toLowerCase();
+        const filtered = (state.data.notifications || []).filter(n => {
+          if (state.appFilter && n.packageName !== state.appFilter) return false;
+          if (state.unreadOnly && n.isRead) return false;
+          if (state.starredOnly && !n.isStarred) return false;
+          if (state.hasLinksOnly && !(n.urls && n.urls.length > 0)) return false;
+          if (q) {
+            const hay = (n.title + " " + n.body + " " + n.appLabel).toLowerCase();
+            if (!hay.includes(q)) return false;
+          }
+          return true;
+        });
+
+        const threads = groupThreads(filtered);
+        elThreadList.textContent = "";
+
+        if (threads.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          const h3 = document.createElement("h3");
+          h3.textContent = "All caught up";
+          const p = document.createElement("p");
+          p.textContent = "No matching alerts in your active Nepho session.";
+          empty.append(h3, p);
+          elThreadList.appendChild(empty);
+          state.selectedThreadId = null;
+          renderDetailPane(null);
+          return;
+        }
+
+        if (!state.selectedThreadId || !threads.some(t => t.threadId === state.selectedThreadId)) {
+          state.selectedThreadId = threads[0].threadId;
+        }
+
+        for (const thread of threads) {
+          const card = document.createElement("div");
+          card.className = "thread-card" + (thread.threadId === state.selectedThreadId ? " selected" : "");
+          card.addEventListener("click", async () => {
+            state.selectedThreadId = thread.threadId;
+            renderAll();
+            const unreadKeys = thread.items.filter(i => !i.isRead).map(i => i.key);
+            if (unreadKeys.length > 0) {
+              await apiPost("/api/mark-read", { keys: unreadKeys });
+            }
+          });
+
+          const badge = document.createElement("div");
+          badge.className = "app-badge";
+          badge.textContent = thread.latest.shortBadge || "NP";
+          badge.style.color = APP_COLORS[thread.latest.packageName] || "#22D3EE";
+
+          const meta = document.createElement("div");
+          meta.className = "thread-meta";
+
+          const top = document.createElement("div");
+          top.className = "thread-top";
+          const title = document.createElement("div");
+          title.className = "thread-title";
+          title.textContent = thread.latest.title || thread.latest.appLabel;
+          const time = document.createElement("div");
+          time.className = "thread-time";
+          time.textContent = formatRelative(thread.latest.postTime);
+          top.append(title, time);
+
+          const body = document.createElement("div");
+          body.className = "thread-body";
+          body.textContent = thread.latest.body || "";
+
+          const tags = document.createElement("div");
+          tags.className = "thread-tags";
+          if (thread.hasUnread) {
+            const dot = document.createElement("span");
+            dot.className = "unread-dot";
+            tags.appendChild(dot);
+          }
+          if (thread.isStarred) {
+            const st = document.createElement("span");
+            st.className = "star-tag";
+            st.textContent = "★ Starred";
+            tags.appendChild(st);
+          }
+          const appSpan = document.createElement("span");
+          appSpan.textContent = thread.latest.appLabel + (thread.items.length > 1 ? " • " + thread.items.length + " msgs" : "");
+          tags.appendChild(appSpan);
+
+          meta.append(top, body, tags);
+          card.append(badge, meta);
+          elThreadList.appendChild(card);
+        }
+
+        const activeThread = threads.find(t => t.threadId === state.selectedThreadId) || null;
+        renderDetailPane(activeThread);
+      }
+
+      function renderDetailPane(thread) {
+        elDetailPane.textContent = "";
+        if (!thread) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          const h3 = document.createElement("h3");
+          h3.textContent = "Select a thread";
+          const p = document.createElement("p");
+          p.textContent = "Choose any alert on the left to read messages, star, dismiss, or reply from your computer.";
+          empty.append(h3, p);
+          elDetailPane.appendChild(empty);
+          return;
+        }
+
+        const latest = thread.latest;
+        const header = document.createElement("div");
+        header.className = "detail-header";
+
+        const titleWrap = document.createElement("div");
+        const h2 = document.createElement("div");
+        h2.style.fontWeight = "700";
+        h2.style.fontSize = "17px";
+        h2.textContent = latest.title || latest.appLabel;
+        const sub = document.createElement("div");
+        sub.style.fontSize = "12px";
+        sub.style.color = "var(--text-2)";
+        sub.textContent = latest.appLabel + " • " + formatTime(latest.postTime);
+        titleWrap.append(h2, sub);
+
+        const actions = document.createElement("div");
+        actions.className = "detail-actions";
+
+        const starBtn = document.createElement("button");
+        starBtn.type = "button";
+        starBtn.className = "btn-ghost";
+        starBtn.textContent = thread.isStarred ? "★ Unstar" : "☆ Star";
+        starBtn.addEventListener("click", async () => {
+          await apiPost("/api/star", { key: latest.key });
+          showToast(thread.isStarred ? "Star removed" : "Thread starred");
+        });
+        actions.appendChild(starBtn);
+
+        if (thread.hasUnread) {
+          const readBtn = document.createElement("button");
+          readBtn.type = "button";
+          readBtn.className = "btn-ghost";
+          readBtn.textContent = "Mark Read";
+          readBtn.addEventListener("click", async () => {
+            await apiPost("/api/mark-read", { keys: thread.items.map(i => i.key) });
+            showToast("Marked as read");
+          });
+          actions.appendChild(readBtn);
+        }
+
+        for (const label of (latest.secondaryActions || [])) {
+          const secBtn = document.createElement("button");
+          secBtn.type = "button";
+          secBtn.className = "btn-ghost";
+          secBtn.textContent = label;
+          secBtn.addEventListener("click", async () => {
+            await apiPost("/api/secondary-action", { key: latest.key, actionLabel: label });
+            showToast("Ran '" + label + "' on phone");
+          });
+          actions.appendChild(secBtn);
+        }
+
+        const dismissBtn = document.createElement("button");
+        dismissBtn.type = "button";
+        dismissBtn.className = "btn-danger";
+        dismissBtn.textContent = "Dismiss";
+        dismissBtn.addEventListener("click", async () => {
+          await apiPost("/api/dismiss", { keys: thread.items.map(i => i.key) });
+          showToast("Thread dismissed");
+        });
+        actions.appendChild(dismissBtn);
+
+        header.append(titleWrap, actions);
+        elDetailPane.appendChild(header);
+
+        const scroll = document.createElement("div");
+        scroll.className = "messages-scroll";
+
+        for (const msg of thread.items) {
+          const bubble = document.createElement("div");
+          bubble.className = "msg-bubble";
+          const txt = document.createElement("div");
+          txt.className = "msg-text";
+          txt.textContent = msg.body || "";
+          bubble.appendChild(txt);
+
+          if (msg.urls && msg.urls.length > 0) {
+            const linkRow = document.createElement("div");
+            linkRow.className = "link-chip-row";
+            for (const u of msg.urls) {
+              const href = safeHref(u);
+              if (!href) continue;
+              const a = document.createElement("a");
+              a.className = "link-chip";
+              a.href = href;
+              a.target = "_blank";
+              a.rel = "noopener noreferrer";
+              a.textContent = u;
+              linkRow.appendChild(a);
+            }
+            if (linkRow.childNodes.length > 0) bubble.appendChild(linkRow);
+          }
+
+          const foot = document.createElement("div");
+          foot.className = "msg-footer";
+          foot.textContent = formatTime(msg.postTime) + (msg.isStarred ? " • ★ Starred" : "");
+          bubble.appendChild(foot);
+          scroll.appendChild(bubble);
+
+          for (const reply of (msg.replies || [])) {
+            const rb = document.createElement("div");
+            rb.className = "msg-bubble reply";
+            const rt = document.createElement("div");
+            rt.className = "msg-text";
+            rt.textContent = reply.text || "";
+            const rf = document.createElement("div");
+            rf.className = "msg-footer";
+            rf.textContent = "You • " + formatTime(reply.sentAt);
+            rb.append(rt, rf);
+            scroll.appendChild(rb);
+          }
+        }
+        elDetailPane.appendChild(scroll);
+
+        const replyTarget = [...thread.items].reverse().find(i => i.canReply);
+        if (replyTarget) {
+          const form = document.createElement("form");
+          form.className = "composer";
+          const ta = document.createElement("textarea");
+          ta.placeholder = "Reply via your phone (" + latest.appLabel + ")… Press Enter to send";
+          const sendBtn = document.createElement("button");
+          sendBtn.type = "submit";
+          sendBtn.className = "btn-primary";
+          sendBtn.textContent = "Send";
+
+          async function submitReply() {
+            const text = ta.value.trim();
+            if (!text) return;
+            sendBtn.disabled = true;
+            const res = await apiPost("/api/reply", { key: replyTarget.key, text });
+            sendBtn.disabled = false;
+            if (res && res.ok) {
+              ta.value = "";
+              showToast("Reply dispatched via phone");
+            } else if (res && res.error) {
+              showToast(res.error);
+            }
+          }
+
+          form.addEventListener("submit", (e) => { e.preventDefault(); submitReply(); });
+          ta.addEventListener("keydown", (e) => {
+            if (e.key === "Enter" && !e.shiftKey) {
+              e.preventDefault();
+              submitReply();
+            }
+          });
+          form.append(ta, sendBtn);
+          elDetailPane.appendChild(form);
+        } else {
+          const note = document.createElement("div");
+          note.className = "composer-note";
+          note.textContent = "This notification does not expose an inline reply action on Android.";
+          elDetailPane.appendChild(note);
+        }
+      }
+
+      function renderVault() {
+        const q = state.search.trim().toLowerCase();
+        const links = (state.data.links || []).filter(l => {
+          if (!q) return true;
+          return (l.url + " " + l.domain + " " + l.senderTitle + " " + l.appLabel).toLowerCase().includes(q);
+        });
+        elVaultGrid.textContent = "";
+        if (links.length === 0) {
+          const empty = document.createElement("div");
+          empty.className = "empty-state";
+          const h3 = document.createElement("h3");
+          h3.textContent = "Links Vault is empty";
+          const p = document.createElement("p");
+          p.textContent = "Links captured from incoming phone notifications appear here automatically.";
+          empty.append(h3, p);
+          elVaultGrid.appendChild(empty);
+          return;
+        }
+        for (const link of links) {
+          const card = document.createElement("div");
+          card.className = "vault-card";
+
+          const top = document.createElement("div");
+          top.className = "thread-top";
+          const domain = document.createElement("div");
+          domain.className = "vault-domain";
+          domain.textContent = link.domain || "Link";
+          const time = document.createElement("div");
+          time.className = "thread-time";
+          time.textContent = formatRelative(link.postTime);
+          top.append(domain, time);
+
+          const sender = document.createElement("div");
+          sender.style.fontSize = "13px";
+          sender.textContent = (link.senderTitle || "") + " • " + (link.appLabel || "");
+
+          const urlEl = document.createElement("div");
+          urlEl.className = "vault-url";
+          urlEl.textContent = link.url;
+
+          const row = document.createElement("div");
+          row.className = "detail-actions";
+
+          const href = safeHref(link.url);
+          if (href) {
+            const openA = document.createElement("a");
+            openA.className = "btn-primary";
+            openA.style.textDecoration = "none";
+            openA.style.padding = "7px 12px";
+            openA.style.fontSize = "12px";
+            openA.href = href;
+            openA.target = "_blank";
+            openA.rel = "noopener noreferrer";
+            openA.textContent = "Open";
+            row.appendChild(openA);
+          }
+
+          const copyBtn = document.createElement("button");
+          copyBtn.type = "button";
+          copyBtn.className = "btn-ghost";
+          copyBtn.textContent = "Copy";
+          copyBtn.addEventListener("click", async () => {
+            try {
+              await navigator.clipboard.writeText(link.url);
+              showToast("Link copied");
+            } catch (_) {
+              showToast("Copy not supported on this browser");
+            }
+          });
+
+          const starBtn = document.createElement("button");
+          starBtn.type = "button";
+          starBtn.className = "btn-ghost";
+          starBtn.textContent = link.isStarred ? "★ Starred" : "☆ Star";
+          starBtn.addEventListener("click", async () => {
+            await apiPost("/api/star", { linkId: link.id, currentlyStarred: !!link.isStarred });
+          });
+
+          row.append(copyBtn, starBtn);
+          card.append(top, sender, urlEl, row);
+          elVaultGrid.appendChild(card);
+        }
+      }
+
+      function renderAll() {
+        const unread = state.data.unreadTotal || 0;
+        elUnreadPill.textContent = unread > 0 ? unread + " unread" : "All clear";
+        elSessionSince.textContent = "Active since " + formatTime(state.data.sessionOpenedAt || Date.now());
+        elTabFeed.classList.toggle("active", state.tab === "feed");
+        elTabVault.classList.toggle("active", state.tab === "vault");
+        elFeedView.classList.toggle("hidden", state.tab !== "feed");
+        elVaultView.classList.toggle("hidden", state.tab !== "vault");
+        renderFilterBar();
+        if (state.tab === "feed") {
+          renderFeed();
+        } else {
+          renderVault();
+        }
+      }
+
+      if (state.token) {
+        enterApp();
+      } else {
+        elPinInput.focus();
+      }
+    })();
+  </script>
+</body>
+</html>

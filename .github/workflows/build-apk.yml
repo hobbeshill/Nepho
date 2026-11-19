@@ -1,4 +1,4 @@
-name: Build Nepho APK
+name: Build & Release Nepho APK
 
 on:
   push:
@@ -6,10 +6,10 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: read
+  contents: write
 
 jobs:
-  build-debug-apk:
+  build-and-release-apk:
     runs-on: ubuntu-latest
 
     steps:
@@ -50,12 +50,43 @@ jobs:
               -dname "CN=Android Debug,O=Android,C=US"
           fi
 
-      - name: Build Debug APK
-        run: gradle :app:assembleDebug --no-daemon
+      - name: Compute release version
+        id: version
+        run: |
+          VERSION_CODE=$((GITHUB_RUN_NUMBER + 1))
+          VERSION_NAME="1.0.${GITHUB_RUN_NUMBER}"
+          RELEASE_TAG="v${VERSION_NAME}"
+          echo "code=${VERSION_CODE}" >> "$GITHUB_OUTPUT"
+          echo "name=${VERSION_NAME}" >> "$GITHUB_OUTPUT"
+          echo "tag=${RELEASE_TAG}" >> "$GITHUB_OUTPUT"
 
-      - name: Upload Nepho Debug APK
+      - name: Build Debug APK
+        run: >
+          gradle :app:assembleDebug --no-daemon
+          -PnephoVersionCode=${{ steps.version.outputs.code }}
+          -PnephoVersionName=${{ steps.version.outputs.name }}
+          -PnephoGithubRepo=${{ github.repository }}
+
+      - name: Stage APK asset
+        run: cp app/build/outputs/apk/debug/app-debug.apk nepho-debug.apk
+
+      - name: Upload Nepho Debug APK artifact
         uses: actions/upload-artifact@v4
         with:
           name: nepho-debug-apk
-          path: app/build/outputs/apk/debug/app-debug.apk
+          path: nepho-debug.apk
           if-no-files-found: error
+
+      - name: Publish GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          TAG="${{ steps.version.outputs.tag }}"
+          TITLE="Nepho ${{ steps.version.outputs.name }}"
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" nepho-debug.apk --clobber
+          else
+            gh release create "$TAG" nepho-debug.apk \
+              --title "$TITLE" \
+              --generate-notes
+          fi
