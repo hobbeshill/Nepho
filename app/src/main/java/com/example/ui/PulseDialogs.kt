@@ -1,6 +1,7 @@
 package com.example.ui
 
 import androidx.compose.foundation.BorderStroke
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -20,6 +21,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
+import androidx.compose.material3.Checkbox
+import androidx.compose.material3.CheckboxDefaults
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
@@ -44,15 +47,19 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.example.R
 import com.example.data.AppShadePreference
 import com.example.data.PulseNotificationItem
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
+import com.example.data.local.HomeSectionPrefs
 import com.example.ui.theme.BorderHairline
 import com.example.ui.theme.CrimsonError
 import com.example.ui.theme.CyanPulse
@@ -561,5 +568,101 @@ private fun ShadeModeRow(
                 modifier = Modifier.testTag("opted_out_label_$tagPrefix")
             )
         }
+    }
+}
+
+@Composable
+fun HomeSectionsDialog(
+    sections: HomeSectionPrefs,
+    onSetSections: (HomeSectionPrefs) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = {
+            Text(
+                text = stringResource(R.string.home_sections_title),
+                style = MaterialTheme.typography.titleLarge
+            )
+        },
+        text = {
+            Column(
+                modifier = Modifier.verticalScroll(rememberScrollState()),
+                verticalArrangement = Arrangement.spacedBy(2.dp)
+            ) {
+                Text(
+                    text = stringResource(R.string.home_sections_subtitle),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    modifier = Modifier.padding(bottom = 8.dp)
+                )
+                HomeSectionToggleRow(
+                    label = stringResource(R.string.home_section_clock),
+                    checked = sections.showClock,
+                    testTag = "home_section_toggle_clock",
+                    onCheckedChange = { onSetSections(sections.copy(showClock = it)) }
+                )
+                HomeSectionToggleRow(
+                    label = stringResource(R.string.home_section_music),
+                    checked = sections.showMusic,
+                    testTag = "home_section_toggle_music",
+                    onCheckedChange = { onSetSections(sections.copy(showMusic = it)) }
+                )
+                HomeSectionToggleRow(
+                    label = stringResource(R.string.home_section_calendar),
+                    checked = sections.showCalendar,
+                    testTag = "home_section_toggle_calendar",
+                    onCheckedChange = { onSetSections(sections.copy(showCalendar = it)) }
+                )
+                HomeSectionToggleRow(
+                    label = stringResource(R.string.home_section_app_drawer),
+                    checked = sections.showAppDrawer,
+                    testTag = "home_section_toggle_app_drawer",
+                    onCheckedChange = { onSetSections(sections.copy(showAppDrawer = it)) }
+                )
+                HomeSectionToggleRow(
+                    label = stringResource(R.string.home_section_dock),
+                    checked = sections.showShortcutDock,
+                    testTag = "home_section_toggle_dock",
+                    onCheckedChange = { onSetSections(sections.copy(showShortcutDock = it)) }
+                )
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = onDismiss,
+                modifier = Modifier.testTag("home_sections_done_button")
+            ) {
+                Text(stringResource(R.string.dock_done_editing))
+            }
+        }
+    )
+}
+
+@Composable
+private fun HomeSectionToggleRow(
+    label: String,
+    checked: Boolean,
+    testTag: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onCheckedChange(!checked) }
+            .testTag(testTag),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Checkbox(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = CheckboxDefaults.colors(checkedColor = CyanPulse)
+        )
+        Text(
+            text = label,
+            style = MaterialTheme.typography.bodyMedium,
+            color = MaterialTheme.colorScheme.onSurface
+        )
     }
 }

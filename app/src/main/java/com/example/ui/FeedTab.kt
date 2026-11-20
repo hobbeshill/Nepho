@@ -240,11 +240,9 @@ fun LazyListScope.feedSectionItems(
                             onClick = { onSelectAppFilter(app) },
                             label = { Text(app.displayName) },
                             leadingIcon = {
-                                Box(
-                                    modifier = Modifier
-                                        .size(8.dp)
-                                        .clip(CircleShape)
-                                        .background(app.accentColor)
+                                SupportedAppIcon(
+                                    app = app,
+                                    size = 18.dp
                                 )
                             },
                             modifier = Modifier.testTag("filter_chip_${app.name.lowercase()}"),
@@ -572,19 +570,11 @@ private fun AppGroupHeader(
                 horizontalArrangement = Arrangement.spacedBy(10.dp),
                 modifier = Modifier.weight(1f)
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(30.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(app.accentColor.copy(alpha = 0.18f)),
-                    contentAlignment = Alignment.Center
-                ) {
-                    Text(
-                        text = app.shortBadge,
-                        style = MaterialTheme.typography.labelSmall.copy(fontWeight = FontWeight.Bold),
-                        color = app.accentColor
-                    )
-                }
+                SupportedAppIcon(
+                    app = app,
+                    size = 30.dp,
+                    cornerRadius = 8.dp
+                )
                 Column {
                     Row(
                         verticalAlignment = Alignment.CenterVertically,

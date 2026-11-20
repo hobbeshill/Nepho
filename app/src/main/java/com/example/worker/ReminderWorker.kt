@@ -26,6 +26,7 @@ class ReminderWorker(
         LocalPulseNotifier.postReminderNotification(
             context = applicationContext,
             notificationId = entity.notificationId + 50_000,
+            packageName = entity.packageName,
             appLabel = entity.appLabel,
             title = entity.title,
             body = entity.body,

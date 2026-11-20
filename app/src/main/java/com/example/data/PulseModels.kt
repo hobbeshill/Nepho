@@ -3,6 +3,10 @@ package com.example.data
 import org.json.JSONArray
 import org.json.JSONObject
 
+/** Conversation identity: all notifications from the same app with the same title form a thread. */
+fun pulseThreadId(packageName: String, title: String): String =
+    "$packageName|${title.trim().lowercase()}"
+
 data class ReplyEntry(
     val text: String,
     val sentAt: Long,
@@ -34,7 +38,7 @@ data class PulseNotificationItem(
 
     /** Conversation identity: all notifications from the same app with the same title form a thread. */
     val threadId: String
-        get() = "$packageName|${title.trim().lowercase()}"
+        get() = pulseThreadId(packageName, title)
 
     /** URLs in the message body that point at directly renderable images or GIFs. */
     val imageUrls: List<String>

@@ -17,6 +17,8 @@ import com.example.MainActivity
 import com.example.R
 import com.example.data.NativeReplyHandle
 import com.example.data.PulseRepository
+import com.example.data.pulseThreadId
+import com.example.widget.NephoUnreadWidgetProvider
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
@@ -73,9 +75,29 @@ object LocalPulseNotifier {
         }
     }
 
+    /** Builds a PendingIntent that opens Nepho directly on the message's thread. */
+    private fun buildOpenThreadIntent(
+        context: Context,
+        notificationId: Int,
+        packageName: String,
+        title: String
+    ): PendingIntent = PendingIntent.getActivity(
+        context,
+        notificationId,
+        Intent(context, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
+            putExtra(
+                NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID,
+                pulseThreadId(packageName, title)
+            )
+        },
+        PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+    )
+
     fun postReminderNotification(
         context: Context,
         notificationId: Int,
+        packageName: String,
         appLabel: String,
         title: String,
         body: String,
@@ -84,13 +106,11 @@ object LocalPulseNotifier {
         ensureChannel(context)
         if (!hasNotificationPermission(context)) return
 
-        val openAppIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val openAppIntent = buildOpenThreadIntent(
+            context = context,
+            notificationId = notificationId,
+            packageName = packageName,
+            title = title
         )
 
         val displayBody = if (!reminderNote.isNullOrBlank()) {
@@ -121,6 +141,7 @@ object LocalPulseNotifier {
         repository: PulseRepository,
         key: String,
         notificationId: Int,
+        packageName: String,
         appLabel: String,
         title: String,
         body: String,
@@ -130,13 +151,11 @@ object LocalPulseNotifier {
     ) {
         ensureChannel(context)
 
-        val openAppIntent = PendingIntent.getActivity(
-            context,
-            notificationId,
-            Intent(context, MainActivity::class.java).apply {
-                flags = Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP
-            },
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        val openAppIntent = buildOpenThreadIntent(
+            context = context,
+            notificationId = notificationId,
+            packageName = packageName,
+            title = title
         )
 
         val remoteInput = RemoteInput.Builder(REMOTE_INPUT_KEY)

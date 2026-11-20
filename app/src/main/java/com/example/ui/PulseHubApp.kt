@@ -38,6 +38,7 @@ import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.filled.Link
 import androidx.compose.material.icons.filled.Lock
 import androidx.compose.material.icons.filled.MoreVert
+import androidx.compose.material.icons.outlined.Dashboard
 import androidx.compose.material.icons.outlined.DynamicFeed
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Home
@@ -149,6 +150,7 @@ fun NephoApp(
     val isSearchingWeatherCities by viewModel.isSearchingWeatherCities.collectAsStateWithLifecycle()
     val calendarScheduleState by viewModel.calendarScheduleState.collectAsStateWithLifecycle()
     val preferredMusicApp by viewModel.preferredMusicApp.collectAsStateWithLifecycle()
+    val homeSections by viewModel.homeSections.collectAsStateWithLifecycle()
 
     val pinnedPackageSet = remember(pinnedShortcutPackages) { pinnedShortcutPackages.toSet() }
 
@@ -165,9 +167,9 @@ fun NephoApp(
     var showShadePrefsDialog by rememberSaveable { mutableStateOf(false) }
     var showDiagnosticsDialog by rememberSaveable { mutableStateOf(false) }
     var showUpdatesDialog by rememberSaveable { mutableStateOf(false) }
-    var showQuickAlarmDialog by rememberSaveable { mutableStateOf(false) }
     var showWeatherDialog by rememberSaveable { mutableStateOf(false) }
     var showMusicServiceDialog by rememberSaveable { mutableStateOf(false) }
+    var showHomeSectionsDialog by rememberSaveable { mutableStateOf(false) }
     var showShortcutDrawer by rememberSaveable { mutableStateOf(false) }
     var isAppSearchFocused by remember { mutableStateOf(false) }
     var reminderTargetItem by remember { mutableStateOf<com.example.data.PulseNotificationItem?>(null) }
@@ -210,13 +212,13 @@ fun NephoApp(
     LaunchedEffect(Unit) {
         viewModel.homePressedEvents.collect {
             showShortcutDrawer = false
-            showQuickAlarmDialog = false
             showWeatherDialog = false
             showMusicServiceDialog = false
             showComposeDialog = false
             showShadePrefsDialog = false
             showDiagnosticsDialog = false
             showUpdatesDialog = false
+            showHomeSectionsDialog = false
             menuExpanded = false
             isAppSearchFocused = false
             reminderTargetItem = null
@@ -229,7 +231,6 @@ fun NephoApp(
 
     // Back gesture behavior for Home replacement & overlays
     val shouldInterceptBack = showShortcutDrawer ||
-        showQuickAlarmDialog ||
         showWeatherDialog ||
         showMusicServiceDialog ||
         appSearchQuery.isNotEmpty() ||
@@ -238,7 +239,6 @@ fun NephoApp(
     BackHandler(enabled = shouldInterceptBack) {
         when {
             showShortcutDrawer -> showShortcutDrawer = false
-            showQuickAlarmDialog -> showQuickAlarmDialog = false
             showWeatherDialog -> showWeatherDialog = false
             showMusicServiceDialog -> showMusicServiceDialog = false
             appSearchQuery.isNotEmpty() -> viewModel.updateAppSearchQuery("")
@@ -250,14 +250,6 @@ fun NephoApp(
                 }
             }
         }
-    }
-
-    if (showQuickAlarmDialog) {
-        QuickAlarmDialog(
-            onSetAlarm = viewModel::setQuickAlarm,
-            onOpenClockApp = viewModel::openClockApp,
-            onDismiss = { showQuickAlarmDialog = false }
-        )
     }
 
     if (showWeatherDialog) {
@@ -286,6 +278,14 @@ fun NephoApp(
             onOpenSelectedService = viewModel::openPreferredMusicService,
             onGrantNotificationAccess = onOpenNotificationAccessSettings,
             onDismiss = { showMusicServiceDialog = false }
+        )
+    }
+
+    if (showHomeSectionsDialog) {
+        HomeSectionsDialog(
+            sections = homeSections,
+            onSetSections = viewModel::setHomeSections,
+            onDismiss = { showHomeSectionsDialog = false }
         )
     }
 
@@ -401,7 +401,18 @@ fun NephoApp(
 
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         val isLandscapeSplit = maxWidth >= 640.dp
-        val drawerHeaderIndex = if (isLandscapeSplit) 3 else (4 + inboxItemCount)
+        // Optional leading cards can be hidden from settings, so compute indices dynamically.
+        val leadingHomeCards = listOfNotNull(
+            HomeSectionTarget.CLOCK.takeIf { homeSections.showClock },
+            HomeSectionTarget.MUSIC.takeIf { homeSections.showMusic },
+            HomeSectionTarget.CALENDAR.takeIf { homeSections.showCalendar }
+        )
+        val inboxHeaderIndex = leadingHomeCards.size
+        val drawerHeaderIndex = if (isLandscapeSplit) {
+            leadingHomeCards.size
+        } else {
+            inboxHeaderIndex + 1 + inboxItemCount
+        }
         val searchRunwayHeight = (maxHeight * 0.65f).coerceAtLeast(280.dp)
 
         val scrollAppSearchToTop: () -> Unit = {
@@ -429,12 +440,13 @@ fun NephoApp(
 
         val jumpToSection: (HomeSectionTarget) -> Unit = { target ->
             coroutineScope.launch {
+                val leadingIndex = leadingHomeCards.indexOf(target).coerceAtLeast(0)
                 if (isLandscapeSplit) {
                     when (target) {
-                        HomeSectionTarget.CLOCK -> landscapeLeftListState.animateScrollToItem(0)
-                        HomeSectionTarget.MUSIC -> landscapeLeftListState.animateScrollToItem(1)
-                        HomeSectionTarget.CALENDAR -> landscapeLeftListState.animateScrollToItem(2)
-                        HomeSectionTarget.APPS -> landscapeLeftListState.animateScrollToItem(3)
+                        HomeSectionTarget.CLOCK,
+                        HomeSectionTarget.MUSIC,
+                        HomeSectionTarget.CALENDAR -> landscapeLeftListState.animateScrollToItem(leadingIndex)
+                        HomeSectionTarget.APPS -> landscapeLeftListState.animateScrollToItem(drawerHeaderIndex)
                         HomeSectionTarget.FEED -> {
                             viewModel.selectTab(PulseTab.FEED)
                             landscapeRightListState.animateScrollToItem(0)
@@ -446,16 +458,16 @@ fun NephoApp(
                     }
                 } else {
                     when (target) {
-                        HomeSectionTarget.CLOCK -> portraitListState.animateScrollToItem(0)
-                        HomeSectionTarget.MUSIC -> portraitListState.animateScrollToItem(1)
-                        HomeSectionTarget.CALENDAR -> portraitListState.animateScrollToItem(2)
+                        HomeSectionTarget.CLOCK,
+                        HomeSectionTarget.MUSIC,
+                        HomeSectionTarget.CALENDAR -> portraitListState.animateScrollToItem(leadingIndex)
                         HomeSectionTarget.FEED -> {
                             viewModel.selectTab(PulseTab.FEED)
-                            portraitListState.animateScrollToItem(3)
+                            portraitListState.animateScrollToItem(inboxHeaderIndex)
                         }
                         HomeSectionTarget.VAULT -> {
                             viewModel.selectTab(PulseTab.LINKS_VAULT)
-                            portraitListState.animateScrollToItem(3)
+                            portraitListState.animateScrollToItem(inboxHeaderIndex)
                         }
                         HomeSectionTarget.APPS -> {
                             portraitListState.animateScrollToItem(drawerHeaderIndex)
@@ -613,6 +625,17 @@ fun NephoApp(
                                         modifier = Modifier.testTag("menu_shade_preferences")
                                     )
                                     DropdownMenuItem(
+                                        text = { Text(stringResource(R.string.action_home_sections)) },
+                                        leadingIcon = {
+                                            Icon(Icons.Outlined.Dashboard, contentDescription = null)
+                                        },
+                                        onClick = {
+                                            menuExpanded = false
+                                            showHomeSectionsDialog = true
+                                        },
+                                        modifier = Modifier.testTag("menu_home_sections")
+                                    )
+                                    DropdownMenuItem(
                                         text = { Text(stringResource(R.string.action_capture_diagnostics)) },
                                         leadingIcon = {
                                             Icon(Icons.Outlined.HealthAndSafety, contentDescription = null)
@@ -664,11 +687,18 @@ fun NephoApp(
                 }
             },
             bottomBar = {
-                if (!isImeVisible) {
+                if (!isImeVisible && homeSections.showShortcutDock) {
                     BottomShortcutDock(
                         pinnedApps = pinnedShortcutApps,
                         onLaunchApp = viewModel::launchInstalledApp,
-                        onExpandDrawer = { showShortcutDrawer = true }
+                        onExpandDrawer = { showShortcutDrawer = true },
+                        onSwipeUp = {
+                            if (homeSections.showAppDrawer) {
+                                jumpToSection(HomeSectionTarget.APPS)
+                            } else {
+                                showShortcutDrawer = true
+                            }
+                        }
                     )
                 }
             }
@@ -703,49 +733,57 @@ fun NephoApp(
                         contentPadding = PaddingValues(vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        item(key = "home_clock") {
-                            HomeClockCard(
-                                nextAlarmSummary = nextAlarmSummary,
-                                onClick = { showQuickAlarmDialog = true },
-                                weatherState = weatherUiState,
-                                onWeatherClick = { showWeatherDialog = true }
-                            )
-                        }
-                        item(key = "home_music") {
-                            HomeMusicCard(
-                                mediaState = mediaPlaybackState,
-                                onTogglePlayPause = viewModel::mediaTogglePlayPause,
-                                onSkipPrevious = viewModel::mediaSkipPrevious,
-                                onSkipNext = viewModel::mediaSkipNext,
-                                onOpenMusicApp = viewModel::openMusicApp,
-                                onGrantNotificationAccess = onOpenNotificationAccessSettings,
-                                preferredMusicApp = preferredMusicApp,
-                                onChooseMusicService = { showMusicServiceDialog = true }
-                            )
-                        }
-                        item(key = "home_calendar") {
-                            HomeCalendarCard(
-                                scheduleState = calendarScheduleState,
-                                onRequestCalendarPermission = onRequestCalendarPermission,
-                                onRefresh = viewModel::refreshCalendarSchedule,
-                                onOpenEvent = viewModel::openCalendarEvent,
-                                onOpenCalendarApp = viewModel::openGoogleCalendar
-                            )
-                        }
-                        appDrawerSectionItems(
-                            totalInstalledCount = installedApps.size,
-                            searchQuery = appSearchQuery,
-                            groupedApps = groupedApps,
-                            pinnedPackages = pinnedPackageSet,
-                            onSearchQueryChange = viewModel::updateAppSearchQuery,
-                            onJumpToLetter = jumpToDrawerLetter,
-                            onLaunchApp = viewModel::launchInstalledApp,
-                            onTogglePin = viewModel::togglePinnedShortcut,
-                            onSearchFocusChanged = { focused ->
-                                isAppSearchFocused = focused
-                                if (focused) scrollAppSearchToTop()
+                        if (homeSections.showClock) {
+                            item(key = "home_clock") {
+                                HomeClockCard(
+                                    nextAlarmSummary = nextAlarmSummary,
+                                    onClick = viewModel::openClockApp,
+                                    weatherState = weatherUiState,
+                                    onWeatherClick = { showWeatherDialog = true }
+                                )
                             }
-                        )
+                        }
+                        if (homeSections.showMusic) {
+                            item(key = "home_music") {
+                                HomeMusicCard(
+                                    mediaState = mediaPlaybackState,
+                                    onTogglePlayPause = viewModel::mediaTogglePlayPause,
+                                    onSkipPrevious = viewModel::mediaSkipPrevious,
+                                    onSkipNext = viewModel::mediaSkipNext,
+                                    onOpenMusicApp = viewModel::openMusicApp,
+                                    onGrantNotificationAccess = onOpenNotificationAccessSettings,
+                                    preferredMusicApp = preferredMusicApp,
+                                    onChooseMusicService = { showMusicServiceDialog = true }
+                                )
+                            }
+                        }
+                        if (homeSections.showCalendar) {
+                            item(key = "home_calendar") {
+                                HomeCalendarCard(
+                                    scheduleState = calendarScheduleState,
+                                    onRequestCalendarPermission = onRequestCalendarPermission,
+                                    onRefresh = viewModel::refreshCalendarSchedule,
+                                    onOpenEvent = viewModel::openCalendarEvent,
+                                    onOpenCalendarApp = viewModel::openGoogleCalendar
+                                )
+                            }
+                        }
+                        if (homeSections.showAppDrawer) {
+                            appDrawerSectionItems(
+                                totalInstalledCount = installedApps.size,
+                                searchQuery = appSearchQuery,
+                                groupedApps = groupedApps,
+                                pinnedPackages = pinnedPackageSet,
+                                onSearchQueryChange = viewModel::updateAppSearchQuery,
+                                onJumpToLetter = jumpToDrawerLetter,
+                                onLaunchApp = viewModel::launchInstalledApp,
+                                onTogglePin = viewModel::togglePinnedShortcut,
+                                onSearchFocusChanged = { focused ->
+                                    isAppSearchFocused = focused
+                                    if (focused) scrollAppSearchToTop()
+                                }
+                            )
+                        }
                         item(key = "landscape_left_bottom_spacer") {
                             Spacer(
                                 Modifier.height(
@@ -847,36 +885,42 @@ fun NephoApp(
                         contentPadding = PaddingValues(horizontal = 16.dp, vertical = 12.dp),
                         verticalArrangement = Arrangement.spacedBy(12.dp)
                     ) {
-                        item(key = "home_clock") {
-                            HomeClockCard(
-                                nextAlarmSummary = nextAlarmSummary,
-                                onClick = { showQuickAlarmDialog = true },
-                                weatherState = weatherUiState,
-                                onWeatherClick = { showWeatherDialog = true }
-                            )
+                        if (homeSections.showClock) {
+                            item(key = "home_clock") {
+                                HomeClockCard(
+                                    nextAlarmSummary = nextAlarmSummary,
+                                    onClick = viewModel::openClockApp,
+                                    weatherState = weatherUiState,
+                                    onWeatherClick = { showWeatherDialog = true }
+                                )
+                            }
                         }
 
-                        item(key = "home_music") {
-                            HomeMusicCard(
-                                mediaState = mediaPlaybackState,
-                                onTogglePlayPause = viewModel::mediaTogglePlayPause,
-                                onSkipPrevious = viewModel::mediaSkipPrevious,
-                                onSkipNext = viewModel::mediaSkipNext,
-                                onOpenMusicApp = viewModel::openMusicApp,
-                                onGrantNotificationAccess = onOpenNotificationAccessSettings,
-                                preferredMusicApp = preferredMusicApp,
-                                onChooseMusicService = { showMusicServiceDialog = true }
-                            )
+                        if (homeSections.showMusic) {
+                            item(key = "home_music") {
+                                HomeMusicCard(
+                                    mediaState = mediaPlaybackState,
+                                    onTogglePlayPause = viewModel::mediaTogglePlayPause,
+                                    onSkipPrevious = viewModel::mediaSkipPrevious,
+                                    onSkipNext = viewModel::mediaSkipNext,
+                                    onOpenMusicApp = viewModel::openMusicApp,
+                                    onGrantNotificationAccess = onOpenNotificationAccessSettings,
+                                    preferredMusicApp = preferredMusicApp,
+                                    onChooseMusicService = { showMusicServiceDialog = true }
+                                )
+                            }
                         }
 
-                        item(key = "home_calendar") {
-                            HomeCalendarCard(
-                                scheduleState = calendarScheduleState,
-                                onRequestCalendarPermission = onRequestCalendarPermission,
-                                onRefresh = viewModel::refreshCalendarSchedule,
-                                onOpenEvent = viewModel::openCalendarEvent,
-                                onOpenCalendarApp = viewModel::openGoogleCalendar
-                            )
+                        if (homeSections.showCalendar) {
+                            item(key = "home_calendar") {
+                                HomeCalendarCard(
+                                    scheduleState = calendarScheduleState,
+                                    onRequestCalendarPermission = onRequestCalendarPermission,
+                                    onRefresh = viewModel::refreshCalendarSchedule,
+                                    onOpenEvent = viewModel::openCalendarEvent,
+                                    onOpenCalendarApp = viewModel::openGoogleCalendar
+                                )
+                            }
                         }
 
                         item(key = "home_inbox_header") {
@@ -942,20 +986,22 @@ fun NephoApp(
                             }
                         }
 
-                        appDrawerSectionItems(
-                            totalInstalledCount = installedApps.size,
-                            searchQuery = appSearchQuery,
-                            groupedApps = groupedApps,
-                            pinnedPackages = pinnedPackageSet,
-                            onSearchQueryChange = viewModel::updateAppSearchQuery,
-                            onJumpToLetter = jumpToDrawerLetter,
-                            onLaunchApp = viewModel::launchInstalledApp,
-                            onTogglePin = viewModel::togglePinnedShortcut,
-                            onSearchFocusChanged = { focused ->
-                                isAppSearchFocused = focused
-                                if (focused) scrollAppSearchToTop()
-                            }
-                        )
+                        if (homeSections.showAppDrawer) {
+                            appDrawerSectionItems(
+                                totalInstalledCount = installedApps.size,
+                                searchQuery = appSearchQuery,
+                                groupedApps = groupedApps,
+                                pinnedPackages = pinnedPackageSet,
+                                onSearchQueryChange = viewModel::updateAppSearchQuery,
+                                onJumpToLetter = jumpToDrawerLetter,
+                                onLaunchApp = viewModel::launchInstalledApp,
+                                onTogglePin = viewModel::togglePinnedShortcut,
+                                onSearchFocusChanged = { focused ->
+                                    isAppSearchFocused = focused
+                                    if (focused) scrollAppSearchToTop()
+                                }
+                            )
+                        }
 
                         item(key = "portrait_bottom_spacer") {
                             Spacer(

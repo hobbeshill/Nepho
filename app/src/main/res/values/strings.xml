@@ -170,7 +170,7 @@
     <string name="default_home_settings_unavailable">Home app settings are unavailable on this device.</string>
 
     <!-- Clock & Quick Alarm -->
-    <string name="clock_tap_hint">Tap to set alarm</string>
+    <string name="clock_tap_hint">Tap to open Clock</string>
     <string name="clock_no_alarm">No upcoming alarm</string>
     <string name="clock_next_alarm_prefix">Alarm %1$s</string>
     <string name="alarm_dialog_title">Quick Alarm</string>
@@ -228,6 +228,16 @@
     <string name="dock_remove_shortcut">Remove shortcut</string>
     <string name="dock_empty_hint">Pin apps from the A–Z drawer or tap Add App below to customize your dock.</string>
     <string name="dock_picker_title">Add to Shortcut Drawer</string>
+
+    <!-- Home Screen Section Visibility -->
+    <string name="action_home_sections">Home Sections</string>
+    <string name="home_sections_title">Home Screen Sections</string>
+    <string name="home_sections_subtitle">Choose which sections appear on your home screen.</string>
+    <string name="home_section_clock">Clock &amp; weather card</string>
+    <string name="home_section_music">Music player card</string>
+    <string name="home_section_calendar">Calendar card</string>
+    <string name="home_section_app_drawer">A–Z app drawer &amp; search</string>
+    <string name="home_section_dock">Bottom shortcut bar</string>
     <string name="dock_picker_search">Filter apps…</string>
     <string name="dock_close">Close</string>
 

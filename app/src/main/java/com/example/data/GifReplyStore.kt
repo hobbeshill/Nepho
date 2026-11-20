@@ -38,7 +38,7 @@ object GifReplyStore {
     private const val COPY_BUFFER_BYTES = 8 * 1024
     private const val TAG = "GifReplyStore"
 
-    private val DIRECT_SHARE_ALWAYS_PACKAGES = setOf(
+    private val DIRECT_SHARE_CAPABLE_PACKAGES = setOf(
         SupportedApp.MESSAGES.packageName,
         SupportedApp.TWITTER.packageName
     )
@@ -47,14 +47,16 @@ object GifReplyStore {
         "${context.packageName}.fileprovider"
 
     /**
-     * Messages and X (Twitter) always use direct ACTION_SEND sharing for GIFs so animated files
-     * hand off reliably; other apps fall back to direct share when their RemoteInput is text-only.
+     * GIFs are sent inline through the conversation's own RemoteInput whenever the app
+     * advertises image/GIF support (so the Send button stays a true "send"); direct
+     * ACTION_SEND sharing is only used when the RemoteInput is text-only.
      */
     fun shouldDirectShareGif(packageName: String, supportsNativeGifReply: Boolean): Boolean =
-        packageName in DIRECT_SHARE_ALWAYS_PACKAGES || !supportsNativeGifReply
+        !supportsNativeGifReply
 
+    /** Apps known to accept direct GIF shares, enabling the GIF-only composer without a reply handle. */
     fun isDirectSharePreferredApp(packageName: String): Boolean =
-        packageName in DIRECT_SHARE_ALWAYS_PACKAGES
+        packageName in DIRECT_SHARE_CAPABLE_PACKAGES
 
     /**
      * Copies raw bytes from [sourceUri] into `cacheDir/shared_gifs/` without re-encoding and

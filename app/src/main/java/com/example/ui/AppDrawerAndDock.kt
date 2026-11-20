@@ -4,6 +4,7 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -78,6 +79,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
+import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
@@ -415,6 +417,7 @@ fun BottomShortcutDock(
     pinnedApps: List<LauncherAppInfo>,
     onLaunchApp: (LauncherAppInfo) -> Unit,
     onExpandDrawer: () -> Unit,
+    onSwipeUp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
     val visibleDockApps = remember(pinnedApps) {
@@ -424,6 +427,20 @@ fun BottomShortcutDock(
     Surface(
         modifier = modifier
             .fillMaxWidth()
+            .pointerInput(onSwipeUp) {
+                // Swiping up from the shortcut bar pulls up the alphabetical app search.
+                val triggerDistancePx = 48.dp.toPx()
+                var totalDy = 0f
+                detectVerticalDragGestures(
+                    onDragStart = { totalDy = 0f },
+                    onVerticalDrag = { _, dragAmount -> totalDy += dragAmount },
+                    onDragEnd = {
+                        if (totalDy < -triggerDistancePx) {
+                            onSwipeUp()
+                        }
+                    }
+                )
+            }
             .testTag("bottom_shortcut_dock"),
         color = MidnightSurface,
         border = BorderStroke(1.dp, BorderHairline),

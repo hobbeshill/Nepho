@@ -14,6 +14,7 @@ import androidx.compose.ui.test.performTextInput
 import com.example.data.CachedGifAttachment
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
+import com.example.data.local.HomeSectionPrefs
 import com.example.launcher.CalendarDayGroup
 import com.example.launcher.CalendarEventItem
 import com.example.launcher.CalendarScheduleState
@@ -40,6 +41,7 @@ import com.example.launcher.LauncherAppCatalog
 import com.example.ui.HomeCalendarCard
 import com.example.ui.HomeClockCard
 import com.example.ui.HomeMusicCard
+import com.example.ui.HomeSectionsDialog
 import com.example.ui.LinksVaultTab
 import com.example.ui.ListenerHealthState
 import com.example.ui.MusicServicePickerDialog
@@ -318,6 +320,52 @@ class ChromeOsUiTest {
             assertEquals(1, nextClicks)
             assertEquals("com.spotify.music", launchedDockApp?.packageName)
             assertTrue(expandedDock)
+        }
+    }
+
+    @Test
+    fun `swiping up on the bottom shortcut dock pulls up the app search`() {
+        var swipedUp = false
+
+        composeRule.setContent {
+            NephoTheme {
+                BottomShortcutDock(
+                    pinnedApps = listOf(LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C")),
+                    onLaunchApp = {},
+                    onExpandDrawer = {},
+                    onSwipeUp = { swipedUp = true }
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("bottom_shortcut_dock").performTouchInput { swipeUp() }
+        composeRule.runOnIdle {
+            assertTrue(swipedUp)
+        }
+    }
+
+    @Test
+    fun `home sections dialog toggles section visibility`() {
+        var latest: HomeSectionPrefs? = null
+
+        composeRule.setContent {
+            NephoTheme {
+                HomeSectionsDialog(
+                    sections = HomeSectionPrefs(),
+                    onSetSections = { latest = it },
+                    onDismiss = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("home_section_toggle_calendar").performClick()
+        composeRule.runOnIdle {
+            assertEquals(false, latest?.showCalendar)
+        }
+
+        composeRule.onNodeWithTag("home_section_toggle_dock").performClick()
+        composeRule.runOnIdle {
+            assertEquals(false, latest?.showShortcutDock)
         }
     }
 

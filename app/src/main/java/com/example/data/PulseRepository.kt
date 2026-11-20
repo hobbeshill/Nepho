@@ -328,115 +328,103 @@ class PulseRepository private constructor(
                 else -> null
             }
 
-            if (useDirectShare) {
-                val shareUri = resolvedAttachment?.shareUri
-                    ?: return ReplyDispatchResult(
-                        success = false,
-                        deliveryMode = GifDeliveryMode.DIRECT_SHARE
-                    )
-                val spec = GifReplyStore.buildDirectShareIntent(
-                    context = appContext,
-                    targetPackage = existing.packageName,
-                    targetAppLabel = existing.appLabel,
-                    gifUri = shareUri,
-                    caption = trimmed.ifEmpty { null }
-                )
-                val launched = try {
-                    appContext.startActivity(spec.intent)
-                    true
-                } catch (e: ActivityNotFoundException) {
-                    Log.w("PulseRepository", "No activity available to share GIF for ${existing.packageName}", e)
-                    false
-                } catch (e: SecurityException) {
-                    Log.w("PulseRepository", "Security exception while sharing GIF for ${existing.packageName}", e)
-                    false
+            // Native RemoteInput image/gif path: delivers the GIF inside the conversation itself.
+            val nativeGifUri = resolvedAttachment?.shareUri ?: gifUri
+            val canAttemptNative = !useDirectShare &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                nativeGifUri != null &&
+                nativeGifUri.scheme == "content" &&
+                supportsNativeGif
+            if (canAttemptNative && nativeGifUri != null) {
+                val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
+                    (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
+                var dispatched = false
+                if (shouldDispatchIntent && nativeHandle != null) {
+                    try {
+                        val frameworkInputs = nativeHandle.frameworkRemoteInputs
+                        if (!frameworkInputs.isNullOrEmpty()) {
+                            runCatching {
+                                appContext.grantUriPermission(
+                                    existing.packageName,
+                                    nativeGifUri,
+                                    Intent.FLAG_GRANT_READ_URI_PERMISSION
+                                )
+                            }
+                            val fillInIntent = Intent()
+                            frameworkInputs
+                                .filter { input -> input.allowedDataTypes.any(::supportsGifMimeType) }
+                                .forEach { input ->
+                                    android.app.RemoteInput.addDataResultToIntent(
+                                        input,
+                                        fillInIntent,
+                                        mapOf(GIF_MIME_TYPE to nativeGifUri)
+                                    )
+                                }
+                            fillInIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            val resultsBundle = Bundle().apply {
+                                frameworkInputs.forEach { ri ->
+                                    if (trimmed.isNotEmpty()) putCharSequence(ri.resultKey, trimmed)
+                                }
+                            }
+                            android.app.RemoteInput.addResultsToIntent(
+                                frameworkInputs,
+                                fillInIntent,
+                                resultsBundle
+                            )
+                            nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
+                            dispatched = true
+                        }
+                    } catch (e: PendingIntent.CanceledException) {
+                        Log.w("PulseRepository", "Native GIF reply intent expired; falling back to share", e)
+                    }
                 }
-                if (!launched) {
+                if (dispatched) {
+                    val savedPath = resolvedAttachment?.filePath?.takeIf { it.isNotBlank() }
+                    recordReplyAndDismiss(
+                        key = key,
+                        existing = existing,
+                        replyText = trimmed.ifEmpty { "GIF attachment" },
+                        gifPath = savedPath
+                    )
                     return ReplyDispatchResult(
-                        success = false,
-                        deliveryMode = GifDeliveryMode.DIRECT_SHARE,
-                        usedChooserFallback = spec.usedChooserFallback
+                        success = true,
+                        deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
                     )
                 }
+                // Fall through to direct ACTION_SEND share as a last resort.
+            }
 
-                val savedPath = resolvedAttachment.filePath.takeIf { it.isNotBlank() }
-                recordReplyAndDismiss(
-                    key = key,
-                    existing = existing,
-                    replyText = trimmed.ifEmpty { "GIF attachment" },
-                    gifPath = savedPath
+            val shareUri = resolvedAttachment?.shareUri
+                ?: return ReplyDispatchResult(
+                    success = false,
+                    deliveryMode = GifDeliveryMode.DIRECT_SHARE
                 )
+            val spec = GifReplyStore.buildDirectShareIntent(
+                context = appContext,
+                targetPackage = existing.packageName,
+                targetAppLabel = existing.appLabel,
+                gifUri = shareUri,
+                caption = trimmed.ifEmpty { null }
+            )
+            val launched = try {
+                appContext.startActivity(spec.intent)
+                true
+            } catch (e: ActivityNotFoundException) {
+                Log.w("PulseRepository", "No activity available to share GIF for ${existing.packageName}", e)
+                false
+            } catch (e: SecurityException) {
+                Log.w("PulseRepository", "Security exception while sharing GIF for ${existing.packageName}", e)
+                false
+            }
+            if (!launched) {
                 return ReplyDispatchResult(
-                    success = true,
+                    success = false,
                     deliveryMode = GifDeliveryMode.DIRECT_SHARE,
                     usedChooserFallback = spec.usedChooserFallback
                 )
             }
 
-            // Native RemoteInput image/gif path for non-Messages/X apps that advertise GIF support.
-            val nativeGifUri = resolvedAttachment?.shareUri ?: gifUri
-            if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O ||
-                nativeGifUri == null ||
-                nativeGifUri.scheme != "content" ||
-                !supportsNativeGif
-            ) {
-                return ReplyDispatchResult(
-                    success = false,
-                    deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
-                )
-            }
-            val shouldDispatchIntent = nativeHandle?.replyPendingIntent != null &&
-                (!fromShadeReceiver || !nativeHandle.isSelfBroadcast)
-            var dispatched = false
-            if (shouldDispatchIntent && nativeHandle != null) {
-                try {
-                    val frameworkInputs = nativeHandle.frameworkRemoteInputs
-                    if (!frameworkInputs.isNullOrEmpty()) {
-                        runCatching {
-                            appContext.grantUriPermission(
-                                existing.packageName,
-                                nativeGifUri,
-                                Intent.FLAG_GRANT_READ_URI_PERMISSION
-                            )
-                        }
-                        val fillInIntent = Intent()
-                        frameworkInputs
-                            .filter { input -> input.allowedDataTypes.any(::supportsGifMimeType) }
-                            .forEach { input ->
-                                android.app.RemoteInput.addDataResultToIntent(
-                                    input,
-                                    fillInIntent,
-                                    mapOf(GIF_MIME_TYPE to nativeGifUri)
-                                )
-                            }
-                        fillInIntent.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        val resultsBundle = Bundle().apply {
-                            frameworkInputs.forEach { ri ->
-                                if (trimmed.isNotEmpty()) putCharSequence(ri.resultKey, trimmed)
-                            }
-                        }
-                        android.app.RemoteInput.addResultsToIntent(
-                            frameworkInputs,
-                            fillInIntent,
-                            resultsBundle
-                        )
-                        nativeHandle.replyPendingIntent?.send(appContext, 0, fillInIntent)
-                        dispatched = true
-                    }
-                } catch (_: PendingIntent.CanceledException) {
-                    return ReplyDispatchResult(
-                        success = false,
-                        deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
-                    )
-                }
-            }
-            if (!dispatched) {
-                return ReplyDispatchResult(
-                    success = false,
-                    deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
-                )
-            }
-            val savedPath = resolvedAttachment?.filePath?.takeIf { it.isNotBlank() }
+            val savedPath = resolvedAttachment.filePath.takeIf { it.isNotBlank() }
             recordReplyAndDismiss(
                 key = key,
                 existing = existing,
@@ -445,7 +433,8 @@ class PulseRepository private constructor(
             )
             return ReplyDispatchResult(
                 success = true,
-                deliveryMode = GifDeliveryMode.NATIVE_REMOTE_INPUT
+                deliveryMode = GifDeliveryMode.DIRECT_SHARE,
+                usedChooserFallback = spec.usedChooserFallback
             )
         }
 

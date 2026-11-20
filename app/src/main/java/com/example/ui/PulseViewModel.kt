@@ -28,6 +28,7 @@ import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
 import com.example.data.local.CaptureDiagnosticEntity
+import com.example.data.local.HomeSectionPrefs
 import com.example.data.local.PulseDatabase
 import com.example.launcher.CalendarEventItem
 import com.example.launcher.CalendarScheduleProvider
@@ -113,6 +114,16 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
     val preferredMusicPackage: StateFlow<String?> =
         repository.sessionPreferences.preferredMusicPackageFlow
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), null)
+
+    val homeSections: StateFlow<HomeSectionPrefs> =
+        repository.sessionPreferences.homeSectionsFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeSectionPrefs())
+
+    fun setHomeSections(sections: HomeSectionPrefs) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setHomeSections(sections)
+        }
+    }
 
     val preferredMusicApp: StateFlow<LauncherAppInfo?> = combine(
         preferredMusicPackage,
@@ -1113,6 +1124,7 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                     repository = repository,
                     key = key,
                     notificationId = notifId,
+                    packageName = app.packageName,
                     appLabel = app.displayName,
                     title = cleanTitle,
                     body = cleanBody,

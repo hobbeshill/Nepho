@@ -35,6 +35,15 @@ data class StoredWeatherPrefs(
     }
 }
 
+/** Which optional home screen sections the user wants rendered. */
+data class HomeSectionPrefs(
+    val showClock: Boolean = true,
+    val showMusic: Boolean = true,
+    val showCalendar: Boolean = true,
+    val showAppDrawer: Boolean = true,
+    val showShortcutDock: Boolean = true
+)
+
 private val Context.pulseSessionDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "nepho_session_prefs"
 )
@@ -58,6 +67,11 @@ class SessionPreferences(private val context: Context) {
         val WEATHER_SHORTCUT_PACKAGE = stringPreferencesKey("weather_shortcut_package")
         val WEATHER_CACHE_JSON = stringPreferencesKey("weather_cache_json")
         val PREFERRED_MUSIC_PACKAGE = stringPreferencesKey("preferred_music_package")
+        val HOME_SHOW_CLOCK = booleanPreferencesKey("home_show_clock")
+        val HOME_SHOW_MUSIC = booleanPreferencesKey("home_show_music")
+        val HOME_SHOW_CALENDAR = booleanPreferencesKey("home_show_calendar")
+        val HOME_SHOW_APP_DRAWER = booleanPreferencesKey("home_show_app_drawer")
+        val HOME_SHOW_SHORTCUT_DOCK = booleanPreferencesKey("home_show_shortcut_dock")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -125,6 +139,26 @@ class SessionPreferences(private val context: Context) {
     val preferredMusicPackageFlow: Flow<String?> = context.pulseSessionDataStore.data.map { prefs ->
         prefs[Keys.PREFERRED_MUSIC_PACKAGE]?.takeIf { it.isNotBlank() }
     }.distinctUntilChanged()
+
+    val homeSectionsFlow: Flow<HomeSectionPrefs> = context.pulseSessionDataStore.data.map { prefs ->
+        HomeSectionPrefs(
+            showClock = prefs[Keys.HOME_SHOW_CLOCK] ?: true,
+            showMusic = prefs[Keys.HOME_SHOW_MUSIC] ?: true,
+            showCalendar = prefs[Keys.HOME_SHOW_CALENDAR] ?: true,
+            showAppDrawer = prefs[Keys.HOME_SHOW_APP_DRAWER] ?: true,
+            showShortcutDock = prefs[Keys.HOME_SHOW_SHORTCUT_DOCK] ?: true
+        )
+    }.distinctUntilChanged()
+
+    suspend fun setHomeSections(sections: HomeSectionPrefs) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.HOME_SHOW_CLOCK] = sections.showClock
+            prefs[Keys.HOME_SHOW_MUSIC] = sections.showMusic
+            prefs[Keys.HOME_SHOW_CALENDAR] = sections.showCalendar
+            prefs[Keys.HOME_SHOW_APP_DRAWER] = sections.showAppDrawer
+            prefs[Keys.HOME_SHOW_SHORTCUT_DOCK] = sections.showShortcutDock
+        }
+    }
 
     suspend fun ensureSessionOpenedAt(): Long {
         val current = context.pulseSessionDataStore.data.first()[Keys.SESSION_OPENED_AT]

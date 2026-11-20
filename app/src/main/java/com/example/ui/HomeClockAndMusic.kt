@@ -157,7 +157,7 @@ fun HomeClockCard(
                 horizontalArrangement = Arrangement.spacedBy(12.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                // Clock + Date + Next Alarm (tap to set quick alarm or open Clock)
+                // Clock + Date + Next Alarm (tap opens the Clock/Alarms app directly)
                 Column(
                     verticalArrangement = Arrangement.spacedBy(4.dp),
                     modifier = Modifier

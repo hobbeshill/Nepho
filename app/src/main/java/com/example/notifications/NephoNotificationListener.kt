@@ -374,6 +374,7 @@ class NephoNotificationListener : NotificationListenerService() {
                 repository = repository,
                 key = sbn.key,
                 notificationId = localNotificationId,
+                packageName = sbn.packageName,
                 appLabel = appLabel,
                 title = finalTitle,
                 body = finalBody,
