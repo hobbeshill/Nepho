@@ -64,12 +64,17 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
+import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.ColorFilter
+import androidx.compose.ui.graphics.ColorMatrix
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.platform.LocalHapticFeedback
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.clearAndSetSemantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -90,6 +95,26 @@ import com.example.ui.theme.MidnightSurface
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
+
+private val otherFeedColors = listOf(
+    Color(0xFFB5A7D1),
+    Color(0xFF8FBAB0),
+    Color(0xFFC5A8A2),
+    Color(0xFF9DAFD0),
+    Color(0xFFB8B590),
+    Color(0xFFB59DB9)
+)
+
+internal fun feedAppColor(packageName: String): Color =
+    when (SupportedApp.fromPackageName(packageName)) {
+        SupportedApp.OUTLOOK -> Color(0xFF8FADD2)
+        SupportedApp.GMAIL -> Color(0xFFC99F9F)
+        SupportedApp.GROUPME -> Color(0xFF8ABDBD)
+        SupportedApp.TEAMSNAP -> Color(0xFFC5AD8E)
+        SupportedApp.MESSAGES -> Color(0xFF9ABB9D)
+        SupportedApp.TWITTER -> Color(0xFFA8A5CB)
+        SupportedApp.OTHER -> otherFeedColors[Math.floorMod(packageName.hashCode(), otherFeedColors.size)]
+    }
 
 @Composable
 fun FeedTab(
@@ -556,7 +581,7 @@ private fun AppGroupHeader(
             .clickable { onToggleCollapsed() },
         shape = RoundedCornerShape(14.dp),
         color = HighSurface,
-        border = BorderStroke(1.dp, app.accentColor.copy(alpha = 0.35f))
+        border = BorderStroke(1.dp, feedAppColor(representative.packageName).copy(alpha = 0.65f))
     ) {
         Row(
             modifier = Modifier
@@ -572,6 +597,7 @@ private fun AppGroupHeader(
             ) {
                 SupportedAppIcon(
                     app = app,
+                    packageName = representative.packageName,
                     size = 30.dp,
                     cornerRadius = 8.dp
                 )
@@ -810,241 +836,248 @@ private fun NotificationFeedCard(
             .testTag("notification_card_${item.key}")
             .clickable { onOpenThread() },
         shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(
-            width = 1.dp,
-            color = when {
-                item.isStarred -> AmberSignal.copy(alpha = 0.6f)
-                !item.isRead -> app.accentColor.copy(alpha = 0.45f)
-                else -> BorderHairline
-            }
-        ),
+        border = BorderStroke(1.dp, feedAppColor(item.packageName).copy(alpha = 0.75f)),
         colors = CardDefaults.cardColors(
             containerColor = if (!item.isRead) ElevatedSurface else MidnightSurface
         )
     ) {
-        Column(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(14.dp),
-            verticalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            Row(
-                modifier = Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.SpaceBetween
+        Box(modifier = Modifier.fillMaxWidth()) {
+            SupportedAppIcon(
+                app = app,
+                packageName = item.packageName,
+                size = 96.dp,
+                colorFilter = remember { ColorFilter.colorMatrix(ColorMatrix().apply { setToSaturation(0.35f) }) },
+                modifier = Modifier
+                    .align(Alignment.BottomEnd)
+                    .padding(end = 4.dp, bottom = 4.dp)
+                    .alpha(0.12f)
+                    .testTag("card_app_watermark_${item.key}")
+                    .clearAndSetSemantics { }
+            )
+            Column(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(14.dp),
+                verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                Column(modifier = Modifier.weight(1f)) {
-                    Row(
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(6.dp)
-                    ) {
-                        Text(
-                            text = item.appLabel,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = app.accentColor,
-                            modifier = Modifier
-                                .clip(RoundedCornerShape(6.dp))
-                                .clickable { onOpenApp() }
-                                .testTag("card_open_app_${item.key}")
-                        )
-                        if (!item.isRead) {
-                            Box(
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Column(modifier = Modifier.weight(1f)) {
+                        Row(
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Text(
+                                text = item.appLabel,
+                                style = MaterialTheme.typography.labelMedium,
+                                color = app.accentColor,
                                 modifier = Modifier
-                                    .size(7.dp)
-                                    .clip(CircleShape)
-                                    .background(CyanPulse)
+                                    .clip(RoundedCornerShape(6.dp))
+                                    .clickable { onOpenApp() }
+                                    .testTag("card_open_app_${item.key}")
+                            )
+                            if (!item.isRead) {
+                                Box(
+                                    modifier = Modifier
+                                        .size(7.dp)
+                                        .clip(CircleShape)
+                                        .background(CyanPulse)
+                                )
+                            }
+                        }
+                        Text(
+                            text = item.title,
+                            style = MaterialTheme.typography.titleMedium,
+                            color = MaterialTheme.colorScheme.onSurface,
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(
+                            onClick = onToggleStar,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("star_button_${item.key}")
+                        ) {
+                            Icon(
+                                imageVector = if (item.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                contentDescription = if (item.isStarred) {
+                                    stringResource(R.string.action_unstar_message)
+                                } else {
+                                    stringResource(R.string.action_star_message)
+                                },
+                                tint = if (item.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
+                        IconButton(
+                            onClick = onOpenReminderDialog,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("remind_button_${item.key}")
+                        ) {
+                            Icon(
+                                imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
+                                contentDescription = stringResource(R.string.action_set_reminder),
+                                tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        IconButton(
+                            onClick = onDismiss,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .testTag("dismiss_button_${item.key}")
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Close,
+                                contentDescription = stringResource(R.string.action_dismiss),
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant
+                            )
+                        }
+                        Text(
+                            text = timeText,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
                     }
-                    Text(
-                        text = item.title,
-                        style = MaterialTheme.typography.titleMedium,
-                        color = MaterialTheme.colorScheme.onSurface,
-                        maxLines = 2,
-                        overflow = TextOverflow.Ellipsis
+                }
+
+                if (item.isStarred || item.reminderAt != null) {
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .horizontalScroll(rememberScrollState()),
+                        horizontalArrangement = Arrangement.spacedBy(8.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        if (item.isStarred) {
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = AmberSignalContainer,
+                                modifier = Modifier.testTag("starred_badge_${item.key}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.Star,
+                                        contentDescription = null,
+                                        tint = AmberSignal,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = stringResource(R.string.badge_starred_protected),
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = AmberSignal
+                                    )
+                                }
+                            }
+                        }
+
+                        if (item.reminderAt != null) {
+                            val notePart = item.reminderNote?.let { " • $it" }.orEmpty()
+                            Surface(
+                                shape = RoundedCornerShape(8.dp),
+                                color = CyanPulseContainer,
+                                modifier = Modifier
+                                    .clickable { onOpenReminderDialog() }
+                                    .testTag("reminder_badge_${item.key}")
+                            ) {
+                                Row(
+                                    modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
+                                    verticalAlignment = Alignment.CenterVertically,
+                                    horizontalArrangement = Arrangement.spacedBy(4.dp)
+                                ) {
+                                    Icon(
+                                        imageVector = Icons.Filled.AlarmOn,
+                                        contentDescription = null,
+                                        tint = CyanPulse,
+                                        modifier = Modifier.size(13.dp)
+                                    )
+                                    Text(
+                                        text = "Reminder: ${reminderFormatter.format(Date(item.reminderAt))}$notePart",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = CyanPulse,
+                                        maxLines = 1,
+                                        overflow = TextOverflow.Ellipsis
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Text(
+                    text = item.body,
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    maxLines = 3,
+                    overflow = TextOverflow.Ellipsis
+                )
+
+                val mediaPreview = item.imageUri ?: item.imageUrls.firstOrNull()
+                if (mediaPreview != null) {
+                    NotificationMediaImage(
+                        source = mediaPreview,
+                        contentDescription = "Image from ${item.appLabel}",
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .testTag("card_media_${item.key}"),
+                        maxHeight = 180.dp
                     )
                 }
 
-                Row(verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(
-                        onClick = onToggleStar,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("star_button_${item.key}")
-                    ) {
-                        Icon(
-                            imageVector = if (item.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                            contentDescription = if (item.isStarred) {
-                                stringResource(R.string.action_unstar_message)
-                            } else {
-                                stringResource(R.string.action_star_message)
-                            },
-                            tint = if (item.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = onOpenReminderDialog,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("remind_button_${item.key}")
-                    ) {
-                        Icon(
-                            imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
-                            contentDescription = stringResource(R.string.action_set_reminder),
-                            tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    IconButton(
-                        onClick = onDismiss,
-                        modifier = Modifier
-                            .minimumInteractiveComponentSize()
-                            .testTag("dismiss_button_${item.key}")
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Close,
-                            contentDescription = stringResource(R.string.action_dismiss),
-                            tint = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
+                if (item.urls.isNotEmpty()) {
+                    AssistChip(
+                        onClick = onOpenVaultTab,
+                        label = {
+                            Text(
+                                text = "${item.urls.size} extracted link${if (item.urls.size > 1) "s" else ""} in Vault",
+                                style = MaterialTheme.typography.labelMedium
+                            )
+                        },
+                        leadingIcon = {
+                            Icon(
+                                imageVector = Icons.Default.Link,
+                                contentDescription = null,
+                                modifier = Modifier.size(16.dp),
+                                tint = CyanPulse
+                            )
+                        },
+                        colors = AssistChipDefaults.assistChipColors(
+                            containerColor = CyanPulseContainer.copy(alpha = 0.5f),
+                            labelColor = CyanPulse
+                        ),
+                        modifier = Modifier.testTag("card_links_chip_${item.key}")
+                    )
+                }
+
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                ) {
+                    Icon(
+                        imageVector = Icons.AutoMirrored.Filled.Reply,
+                        contentDescription = null,
+                        tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                        modifier = Modifier.size(13.dp)
+                    )
                     Text(
-                        text = timeText,
+                        text = if (item.replies.isNotEmpty()) {
+                            stringResource(R.string.card_thread_hint_with_replies, item.replies.size)
+                        } else {
+                            stringResource(R.string.card_thread_hint)
+                        },
                         style = MaterialTheme.typography.labelSmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant
                     )
                 }
-            }
-
-            if (item.isStarred || item.reminderAt != null) {
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .horizontalScroll(rememberScrollState()),
-                    horizontalArrangement = Arrangement.spacedBy(8.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    if (item.isStarred) {
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = AmberSignalContainer,
-                            modifier = Modifier.testTag("starred_badge_${item.key}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.Star,
-                                    contentDescription = null,
-                                    tint = AmberSignal,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = stringResource(R.string.badge_starred_protected),
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = AmberSignal
-                                )
-                            }
-                        }
-                    }
-
-                    if (item.reminderAt != null) {
-                        val notePart = item.reminderNote?.let { " • $it" }.orEmpty()
-                        Surface(
-                            shape = RoundedCornerShape(8.dp),
-                            color = CyanPulseContainer,
-                            modifier = Modifier
-                                .clickable { onOpenReminderDialog() }
-                                .testTag("reminder_badge_${item.key}")
-                        ) {
-                            Row(
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp),
-                                verticalAlignment = Alignment.CenterVertically,
-                                horizontalArrangement = Arrangement.spacedBy(4.dp)
-                            ) {
-                                Icon(
-                                    imageVector = Icons.Filled.AlarmOn,
-                                    contentDescription = null,
-                                    tint = CyanPulse,
-                                    modifier = Modifier.size(13.dp)
-                                )
-                                Text(
-                                    text = "Reminder: ${reminderFormatter.format(Date(item.reminderAt))}$notePart",
-                                    style = MaterialTheme.typography.labelSmall,
-                                    color = CyanPulse,
-                                    maxLines = 1,
-                                    overflow = TextOverflow.Ellipsis
-                                )
-                            }
-                        }
-                    }
-                }
-            }
-
-            Text(
-                text = item.body,
-                style = MaterialTheme.typography.bodyMedium,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-                maxLines = 3,
-                overflow = TextOverflow.Ellipsis
-            )
-
-            val mediaPreview = item.imageUri ?: item.imageUrls.firstOrNull()
-            if (mediaPreview != null) {
-                NotificationMediaImage(
-                    source = mediaPreview,
-                    contentDescription = "Image from ${item.appLabel}",
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .testTag("card_media_${item.key}"),
-                    maxHeight = 180.dp
-                )
-            }
-
-            if (item.urls.isNotEmpty()) {
-                AssistChip(
-                    onClick = onOpenVaultTab,
-                    label = {
-                        Text(
-                            text = "${item.urls.size} extracted link${if (item.urls.size > 1) "s" else ""} in Vault",
-                            style = MaterialTheme.typography.labelMedium
-                        )
-                    },
-                    leadingIcon = {
-                        Icon(
-                            imageVector = Icons.Default.Link,
-                            contentDescription = null,
-                            modifier = Modifier.size(16.dp),
-                            tint = CyanPulse
-                        )
-                    },
-                    colors = AssistChipDefaults.assistChipColors(
-                        containerColor = CyanPulseContainer.copy(alpha = 0.5f),
-                        labelColor = CyanPulse
-                    ),
-                    modifier = Modifier.testTag("card_links_chip_${item.key}")
-                )
-            }
-
-            Row(
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(6.dp)
-            ) {
-                Icon(
-                    imageVector = Icons.AutoMirrored.Filled.Reply,
-                    contentDescription = null,
-                    tint = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.size(13.dp)
-                )
-                Text(
-                    text = if (item.replies.isNotEmpty()) {
-                        stringResource(R.string.card_thread_hint_with_replies, item.replies.size)
-                    } else {
-                        stringResource(R.string.card_thread_hint)
-                    },
-                    style = MaterialTheme.typography.labelSmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant
-                )
             }
         }
     }

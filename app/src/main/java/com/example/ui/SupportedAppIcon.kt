@@ -13,6 +13,7 @@ import androidx.compose.runtime.produceState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.ColorFilter
 import androidx.compose.ui.graphics.ImageBitmap
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -33,12 +34,14 @@ fun SupportedAppIcon(
     app: SupportedApp,
     size: Dp,
     modifier: Modifier = Modifier,
-    cornerRadius: Dp = size / 4
+    cornerRadius: Dp = size / 4,
+    packageName: String = app.packageName,
+    colorFilter: ColorFilter? = null
 ) {
     val context = LocalContext.current
-    val iconBitmap by produceState<ImageBitmap?>(initialValue = null, app.packageName) {
+    val iconBitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
         value = withContext(Dispatchers.IO) {
-            LauncherAppCatalog.loadAppIconBitmap(context, app.packageName)
+            LauncherAppCatalog.loadAppIconBitmap(context, packageName)
         }
     }
 
@@ -48,6 +51,7 @@ fun SupportedAppIcon(
             bitmap = loaded,
             contentDescription = null,
             contentScale = ContentScale.Crop,
+            colorFilter = colorFilter,
             modifier = modifier
                 .size(size)
                 .clip(RoundedCornerShape(cornerRadius))

@@ -89,6 +89,7 @@ class ChromeOsUiTest {
         val selected = mutableStateOf<SupportedApp?>(null)
         val notifications = mutableStateOf<List<PulseNotificationItem>>(emptyList())
         var openedApp: SupportedApp? = null
+        var openedThread: String? = null
         composeRule.setContent {
             NephoTheme {
                 FeedTab(
@@ -108,7 +109,7 @@ class ChromeOsUiTest {
                     onOpenNotificationAccessSettings = {},
                     onOpenShadePreferences = {},
                     onDismissBanner = {},
-                    onOpenThread = {},
+                    onOpenThread = { openedThread = it.key },
                     onOpenApp = {},
                     onOpenSelectedApp = { openedApp = it },
                     onToggleStar = {},
@@ -152,6 +153,18 @@ class ChromeOsUiTest {
             selected.value = null
         }
         composeRule.onNodeWithTag("selected_app_link").assertDoesNotExist()
+        composeRule.onNodeWithTag("notification_card_test").performScrollTo()
+        composeRule.onNodeWithTag("card_app_watermark_test", useUnmergedTree = true)
+            .assertExists()
+        composeRule.onNodeWithTag("notification_card_test").performClick()
+        composeRule.runOnIdle {
+            assertEquals("test", openedThread)
+            notifications.value = notifications.value.map { it.copy(isRead = true, isStarred = true) }
+        }
+        composeRule.onNodeWithTag("card_app_watermark_test", useUnmergedTree = true)
+            .assertExists()
+        composeRule.onNodeWithTag("starred_badge_test", useUnmergedTree = true)
+            .performScrollTo().assertIsDisplayed()
     }
 
     @Test
