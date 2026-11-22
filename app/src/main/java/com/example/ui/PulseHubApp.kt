@@ -711,7 +711,18 @@ fun NephoApp(
                     .imePadding()
                     .homeScreenGestures(
                         onDoubleTapScreenOff = onDoubleTapScreenOff,
-                        onSwipeLeftGoogleSearch = viewModel::openGoogleSearch
+                        onSwipeLeftGoogleSearch = viewModel::openGoogleSearch,
+                        canScrollForward = if (isLandscapeSplit) {
+                            landscapeLeftListState.canScrollForward ||
+                                landscapeRightListState.canScrollForward
+                        } else {
+                            portraitListState.canScrollForward
+                        },
+                        onSwipeUpWhenCannotScroll = {
+                            if (homeSections.showAppDrawer) {
+                                jumpToSection(HomeSectionTarget.APPS)
+                            }
+                        }
                     )
                     .testTag("home_gesture_surface")
             ) {

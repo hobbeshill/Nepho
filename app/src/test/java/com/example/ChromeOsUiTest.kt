@@ -658,6 +658,38 @@ class ChromeOsUiTest {
     }
 
     @Test
+    fun `homeScreenGestures opens app search on upward swipe only when screen cannot scroll`() {
+        var appSearchOpenCount = 0
+        val canScrollForward = mutableStateOf(true)
+
+        composeRule.setContent {
+            NephoTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .homeScreenGestures(
+                            onDoubleTapScreenOff = {},
+                            onSwipeLeftGoogleSearch = {},
+                            canScrollForward = canScrollForward.value,
+                            onSwipeUpWhenCannotScroll = { appSearchOpenCount++ }
+                        )
+                        .testTag("non_scrollable_gesture_root")
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("non_scrollable_gesture_root").performTouchInput { swipeUp() }
+        composeRule.runOnIdle {
+            assertEquals(0, appSearchOpenCount)
+            canScrollForward.value = false
+        }
+        composeRule.onNodeWithTag("non_scrollable_gesture_root").performTouchInput { swipeUp() }
+        composeRule.runOnIdle {
+            assertEquals(1, appSearchOpenCount)
+        }
+    }
+
+    @Test
     fun `two-line NephoHeaderTitle shows full app name, full version number, and mental clarity tagline`() {
         var brandClicks = 0
         composeRule.setContent {

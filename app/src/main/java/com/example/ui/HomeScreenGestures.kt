@@ -3,6 +3,7 @@ package com.example.ui
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.gestures.awaitFirstDown
 import androidx.compose.foundation.gestures.detectTapGestures
+import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.composed
 import androidx.compose.ui.input.pointer.PointerEventPass
@@ -19,19 +20,53 @@ import kotlin.math.abs
  * clickable buttons, horizontal chip bars, or swipe-to-dismiss notification cards:
  * - Double-tapping unconsumed home screen space turns the screen off.
  * - Swiping left (right-to-left) anywhere not consumed by a horizontal child opens Google Search.
+ * - Swiping up opens the app drawer only when the home screen cannot scroll further.
  */
 fun Modifier.homeScreenGestures(
     onDoubleTapScreenOff: () -> Unit,
     onSwipeLeftGoogleSearch: () -> Unit,
+    canScrollForward: Boolean = true,
+    onSwipeUpWhenCannotScroll: () -> Unit = {},
     swipeThreshold: Dp = 72.dp
 ): Modifier = composed {
     val swipeThresholdPx = with(LocalDensity.current) { swipeThreshold.toPx() }
+    val swipeUpThresholdPx = with(LocalDensity.current) { 48.dp.toPx() }
+    val currentCanScrollForward = rememberUpdatedState(canScrollForward)
+    val currentOnSwipeUpWhenCannotScroll = rememberUpdatedState(onSwipeUpWhenCannotScroll)
 
     this
         .pointerInput(onDoubleTapScreenOff) {
             detectTapGestures(
                 onDoubleTap = { onDoubleTapScreenOff() }
             )
+        }
+        .pointerInput(swipeUpThresholdPx) {
+            awaitEachGesture {
+                val down = awaitFirstDown(requireUnconsumed = false)
+                val pointerId = down.id
+                val couldScrollForwardAtStart = currentCanScrollForward.value
+                var totalDx = 0f
+                var totalDy = 0f
+
+                while (true) {
+                    val event = awaitPointerEvent(PointerEventPass.Initial)
+                    val change = event.changes.firstOrNull { it.id == pointerId } ?: break
+                    if (!change.pressed) break
+
+                    val delta = change.positionChange()
+                    totalDx += delta.x
+                    totalDy += delta.y
+
+                    if (
+                        !couldScrollForwardAtStart &&
+                        totalDy <= -swipeUpThresholdPx &&
+                        abs(totalDy) >= abs(totalDx) * 1.5f
+                    ) {
+                        currentOnSwipeUpWhenCannotScroll.value()
+                        break
+                    }
+                }
+            }
         }
         .pointerInput(onSwipeLeftGoogleSearch, swipeThresholdPx) {
             val touchSlop = viewConfiguration.touchSlop
