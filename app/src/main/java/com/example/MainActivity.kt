@@ -7,6 +7,7 @@ import android.os.Build
 import android.os.Bundle
 import android.provider.Settings
 import android.util.Log
+import android.view.inputmethod.InputMethodManager
 import android.widget.Toast
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.rememberLauncherForActivityResult
@@ -14,6 +15,10 @@ import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
+import androidx.compose.runtime.getValue
+import androidx.core.view.WindowInsetsCompat
+import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.example.ai.configureAppCheck
 import com.example.data.SupportedApp
 import com.example.ui.NephoApp
@@ -36,7 +41,8 @@ class MainActivity : ComponentActivity() {
         handleWidgetIntent(intent)
 
         setContent {
-            NephoTheme {
+            val calmVisualPrefs by viewModel.calmVisualPrefs.collectAsStateWithLifecycle()
+            NephoTheme(calmPrefs = calmVisualPrefs) {
                 val notificationPermissionLauncher = rememberLauncherForActivityResult(
                     contract = ActivityResultContracts.RequestPermission()
                 ) {
@@ -126,7 +132,9 @@ class MainActivity : ComponentActivity() {
                             com.example.launcher.ScreenLockResult.UNAVAILABLE -> viewModel.notifyScreenLockUnavailable()
                         }
                     },
-                    onEnableScreenLockAdmin = launchScreenLockAdminPrompt
+                    onEnableScreenLockAdmin = launchScreenLockAdminPrompt,
+                    onHideKeyboard = ::hideSoftKeyboard,
+                    onRestartNepho = ::restartNephoCleanly
                 )
             }
         }
@@ -138,12 +146,48 @@ class MainActivity : ComponentActivity() {
         viewModel.refreshLauncherState()
     }
 
+    override fun onUserLeaveHint() {
+        super.onUserLeaveHint()
+        hideSoftKeyboard()
+    }
+
     override fun onNewIntent(intent: Intent) {
         super.onNewIntent(intent)
         setIntent(intent)
         handleHomeIntent(intent)
         handleIncomingShareIntent(intent)
         handleWidgetIntent(intent)
+    }
+
+    private fun restartNephoCleanly() {
+        hideSoftKeyboard()
+        viewModel.resetAndRestartListener()
+        Toast.makeText(
+            this,
+            R.string.restart_nepho_in_progress,
+            Toast.LENGTH_SHORT
+        ).show()
+        val relaunched = runCatching {
+            val restartIntent = Intent(this, MainActivity::class.java).apply {
+                addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)
+            }
+            startActivity(restartIntent)
+            finish()
+            true
+        }.onFailure { e ->
+            Log.w("MainActivity", "Clean relaunch failed; falling back to recreate()", e)
+        }.getOrDefault(false)
+        if (!relaunched) {
+            recreate()
+        }
+    }
+
+    private fun hideSoftKeyboard() {
+        val decorView = window?.decorView ?: return
+        currentFocus?.clearFocus()
+        WindowInsetsControllerCompat(window, decorView).hide(WindowInsetsCompat.Type.ime())
+        val imm = getSystemService(InputMethodManager::class.java)
+        imm?.hideSoftInputFromWindow(decorView.windowToken, 0)
     }
 
     private fun handleHomeIntent(intent: Intent?) {
@@ -154,6 +198,7 @@ class MainActivity : ComponentActivity() {
                     !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_THREAD_ID) &&
                     !intent.hasExtra(NephoUnreadWidgetProvider.EXTRA_WIDGET_APP_PACKAGE)))
         if (isHomeOrMainReturn) {
+            hideSoftKeyboard()
             viewModel.onHomeButtonPressed()
         }
     }

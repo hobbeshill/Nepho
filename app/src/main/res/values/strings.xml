@@ -211,6 +211,9 @@
     <string name="drawer_pinned_toast">%1$s pinned to your shortcut drawer.</string>
     <string name="drawer_unpinned_toast">%1$s removed from your shortcut drawer.</string>
     <string name="drawer_pin_limit_toast">Shortcut drawer supports up to %1$d apps. Unpin one first.</string>
+    <string name="drawer_alphabetical_title">All Apps</string>
+    <string name="drawer_close_desc">Close app drawer</string>
+    <string name="bottom_edge_open_apps_desc">Swipe up or tap to open alphabetical app drawer</string>
 
     <!-- Bottom Shortcut Dock & Expandable Drawer -->
     <string name="dock_expand_label">Expand shortcut drawer</string>
@@ -311,7 +314,51 @@
     <string name="action_enable_double_tap_lock">Enable Double-Tap Screen Off</string>
     <string name="action_double_tap_lock_active">Double-Tap Screen Off (Active)</string>
     <string name="google_search_unavailable">Couldn’t open Google Search on this device.</string>
+
+    <!-- Calm Minimalism & Flexible Home Layout -->
+    <string name="action_home_layout_and_calm">Home Layout &amp; Calm Mode</string>
+    <string name="home_layout_subtitle">Show, reorder, or minimize sections, and adjust calm visual settings.</string>
+    <string name="home_section_inbox">Inbox (Feed &amp; Vault)</string>
+    <string name="home_section_move_up">Move %1$s up</string>
+    <string name="home_section_move_down">Move %1$s down</string>
+    <string name="home_section_minimize">Minimize %1$s</string>
+    <string name="home_section_expand">Expand %1$s</string>
+    <string name="home_layout_reset">Reset Layout</string>
+    <string name="home_layout_reset_toast">Home layout restored to default order.</string>
+    <string name="calm_section_title">Calm Appearance</string>
+    <string name="calm_palette_label">Calm dark palette</string>
+    <string name="calm_palette_desc">Soften bright accents and remove decorative gradients</string>
+    <string name="calm_monochrome_label">Monochrome app icons</string>
+    <string name="calm_monochrome_desc">Desaturate app icons across Home, Dock, and Feed</string>
+    <string name="calm_hide_counts_label">Hide numeric counts</string>
+    <string name="calm_hide_counts_desc">Replace unread and badge numbers with subtle dots</string>
+    <string name="calm_inbox_new_activity">New activity</string>
+    <string name="calm_inbox_reviewed">Reviewed</string>
+    <string name="calm_inbox_caught_up">All caught up</string>
+    <string name="calm_feed_all_clear">All clear — nothing needs your attention</string>
+    <string name="calm_filter_button">Filter</string>
+    <string name="calm_filter_clear">Clear</string>
+    <string name="calm_vault_header">Saved Links</string>
+    <string name="minimized_music_idle">Music • Idle</string>
+    <string name="minimized_calendar_clear">Calendar • Clear schedule</string>
+    <string name="minimized_calendar_connect">Calendar • Tap to connect</string>
+    <string name="minimized_apps_label">Apps</string>
+    <string name="minimized_apps_search_desc">Search apps</string>
+    <string name="minimized_inbox_label">Inbox</string>
+    <string name="group_status_new">New activity</string>
+    <string name="group_status_read">Reviewed</string>
+
+    <!-- Listener Reset / Restart & Soothing Quotes -->
+    <string name="action_restart_nepho">Restart Nepho</string>
+    <string name="restart_nepho_subtitle">Rebind listener &amp; cleanly restart</string>
+    <string name="restart_nepho_yellow_subtitle">Yellow light • Rebind listener &amp; restart</string>
+    <string name="diagnostics_action_restart_nepho">Reset &amp; Restart</string>
+    <string name="restart_nepho_in_progress">Rebinding listener and restarting Nepho…</string>
+    <string name="quotes_card_header">Quiet Reflection</string>
+    <string name="quotes_card_next_desc">Show another soothing quote</string>
+    <string name="quotes_card_tap_hint">Tap for another reflection</string>
 </resources>
+
 
 
 

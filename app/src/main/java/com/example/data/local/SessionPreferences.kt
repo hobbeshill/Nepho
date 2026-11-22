@@ -35,14 +35,84 @@ data class StoredWeatherPrefs(
     }
 }
 
-/** Which optional home screen sections the user wants rendered. */
+/** Ordered homepage content sections that can be shown, hidden, reordered, or minimized. */
+enum class HomeSectionId {
+    CLOCK,
+    MUSIC,
+    CALENDAR,
+    INBOX,
+    APPS;
+
+    companion object {
+        val DEFAULT_ORDER: List<HomeSectionId> = listOf(CLOCK, MUSIC, CALENDAR, INBOX, APPS)
+
+        fun normalizeOrder(raw: List<HomeSectionId>): List<HomeSectionId> {
+            val seen = LinkedHashSet<HomeSectionId>()
+            raw.forEach { seen.add(it) }
+            DEFAULT_ORDER.forEach { seen.add(it) }
+            return seen.toList()
+        }
+    }
+}
+
+/** Low-stimulation visual preferences; defaults to calm minimalist appearance. */
+data class CalmVisualPrefs(
+    val calmPaletteEnabled: Boolean = true,
+    val monochromeIcons: Boolean = true,
+    val hideUnreadCounts: Boolean = true
+)
+
+/** Which optional home screen sections the user wants rendered, their order, and minimized states. */
 data class HomeSectionPrefs(
     val showClock: Boolean = true,
     val showMusic: Boolean = true,
     val showCalendar: Boolean = true,
+    val showInbox: Boolean = true,
     val showAppDrawer: Boolean = true,
-    val showShortcutDock: Boolean = true
-)
+    val showShortcutDock: Boolean = true,
+    val sectionOrder: List<HomeSectionId> = HomeSectionId.DEFAULT_ORDER,
+    val minimizedSections: Set<HomeSectionId> = emptySet()
+) {
+    val normalizedOrder: List<HomeSectionId>
+        get() = HomeSectionId.normalizeOrder(sectionOrder)
+
+    fun isVisible(id: HomeSectionId): Boolean = when (id) {
+        HomeSectionId.CLOCK -> showClock
+        HomeSectionId.MUSIC -> showMusic
+        HomeSectionId.CALENDAR -> showCalendar
+        HomeSectionId.INBOX -> showInbox
+        HomeSectionId.APPS -> showAppDrawer
+    }
+
+    fun isMinimized(id: HomeSectionId): Boolean = id in minimizedSections
+
+    fun withVisibility(id: HomeSectionId, visible: Boolean): HomeSectionPrefs = when (id) {
+        HomeSectionId.CLOCK -> copy(showClock = visible)
+        HomeSectionId.MUSIC -> copy(showMusic = visible)
+        HomeSectionId.CALENDAR -> copy(showCalendar = visible)
+        HomeSectionId.INBOX -> copy(showInbox = visible)
+        HomeSectionId.APPS -> copy(showAppDrawer = visible)
+    }
+
+    fun withMinimized(id: HomeSectionId, minimized: Boolean): HomeSectionPrefs {
+        val updated = minimizedSections.toMutableSet()
+        if (minimized) updated.add(id) else updated.remove(id)
+        return copy(minimizedSections = updated)
+    }
+
+    fun toggleMinimized(id: HomeSectionId): HomeSectionPrefs = withMinimized(id, id !in minimizedSections)
+
+    fun moveSection(id: HomeSectionId, delta: Int): HomeSectionPrefs {
+        val list = normalizedOrder.toMutableList()
+        val index = list.indexOf(id)
+        if (index < 0) return this
+        val target = (index + delta).coerceIn(0, list.lastIndex)
+        if (target == index) return this
+        list.removeAt(index)
+        list.add(target, id)
+        return copy(sectionOrder = list)
+    }
+}
 
 private val Context.pulseSessionDataStore: DataStore<Preferences> by preferencesDataStore(
     name = "nepho_session_prefs"
@@ -70,8 +140,14 @@ class SessionPreferences(private val context: Context) {
         val HOME_SHOW_CLOCK = booleanPreferencesKey("home_show_clock")
         val HOME_SHOW_MUSIC = booleanPreferencesKey("home_show_music")
         val HOME_SHOW_CALENDAR = booleanPreferencesKey("home_show_calendar")
+        val HOME_SHOW_INBOX = booleanPreferencesKey("home_show_inbox")
         val HOME_SHOW_APP_DRAWER = booleanPreferencesKey("home_show_app_drawer")
         val HOME_SHOW_SHORTCUT_DOCK = booleanPreferencesKey("home_show_shortcut_dock")
+        val HOME_SECTION_ORDER_JSON = stringPreferencesKey("home_section_order_json")
+        val HOME_MINIMIZED_SECTIONS_JSON = stringPreferencesKey("home_minimized_sections_json")
+        val CALM_PALETTE_ENABLED = booleanPreferencesKey("calm_palette_enabled")
+        val CALM_MONOCHROME_ICONS = booleanPreferencesKey("calm_monochrome_icons")
+        val CALM_HIDE_UNREAD_COUNTS = booleanPreferencesKey("calm_hide_unread_counts")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -141,22 +217,50 @@ class SessionPreferences(private val context: Context) {
     }.distinctUntilChanged()
 
     val homeSectionsFlow: Flow<HomeSectionPrefs> = context.pulseSessionDataStore.data.map { prefs ->
+        val decodedOrder = decodeStringList(prefs[Keys.HOME_SECTION_ORDER_JSON])
+            .mapNotNull { name -> runCatching { HomeSectionId.valueOf(name) }.getOrNull() }
+        val decodedMinimized = decodeStringSet(prefs[Keys.HOME_MINIMIZED_SECTIONS_JSON])
+            .mapNotNull { name -> runCatching { HomeSectionId.valueOf(name) }.getOrNull() }
+            .toSet()
         HomeSectionPrefs(
             showClock = prefs[Keys.HOME_SHOW_CLOCK] ?: true,
             showMusic = prefs[Keys.HOME_SHOW_MUSIC] ?: true,
             showCalendar = prefs[Keys.HOME_SHOW_CALENDAR] ?: true,
+            showInbox = prefs[Keys.HOME_SHOW_INBOX] ?: true,
             showAppDrawer = prefs[Keys.HOME_SHOW_APP_DRAWER] ?: true,
-            showShortcutDock = prefs[Keys.HOME_SHOW_SHORTCUT_DOCK] ?: true
+            showShortcutDock = prefs[Keys.HOME_SHOW_SHORTCUT_DOCK] ?: true,
+            sectionOrder = HomeSectionId.normalizeOrder(decodedOrder),
+            minimizedSections = decodedMinimized
+        )
+    }.distinctUntilChanged()
+
+    val calmVisualPrefsFlow: Flow<CalmVisualPrefs> = context.pulseSessionDataStore.data.map { prefs ->
+        CalmVisualPrefs(
+            calmPaletteEnabled = prefs[Keys.CALM_PALETTE_ENABLED] ?: true,
+            monochromeIcons = prefs[Keys.CALM_MONOCHROME_ICONS] ?: true,
+            hideUnreadCounts = prefs[Keys.CALM_HIDE_UNREAD_COUNTS] ?: true
         )
     }.distinctUntilChanged()
 
     suspend fun setHomeSections(sections: HomeSectionPrefs) {
+        val normalized = sections.normalizedOrder
         context.pulseSessionDataStore.edit { prefs ->
             prefs[Keys.HOME_SHOW_CLOCK] = sections.showClock
             prefs[Keys.HOME_SHOW_MUSIC] = sections.showMusic
             prefs[Keys.HOME_SHOW_CALENDAR] = sections.showCalendar
+            prefs[Keys.HOME_SHOW_INBOX] = sections.showInbox
             prefs[Keys.HOME_SHOW_APP_DRAWER] = sections.showAppDrawer
             prefs[Keys.HOME_SHOW_SHORTCUT_DOCK] = sections.showShortcutDock
+            prefs[Keys.HOME_SECTION_ORDER_JSON] = encodeStringList(normalized.map { it.name })
+            prefs[Keys.HOME_MINIMIZED_SECTIONS_JSON] = encodeStringSet(sections.minimizedSections.map { it.name }.toSet())
+        }
+    }
+
+    suspend fun setCalmVisualPrefs(calmPrefs: CalmVisualPrefs) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.CALM_PALETTE_ENABLED] = calmPrefs.calmPaletteEnabled
+            prefs[Keys.CALM_MONOCHROME_ICONS] = calmPrefs.monochromeIcons
+            prefs[Keys.CALM_HIDE_UNREAD_COUNTS] = calmPrefs.hideUnreadCounts
         }
     }
 

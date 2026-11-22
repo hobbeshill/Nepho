@@ -91,29 +91,34 @@ import com.example.ui.theme.CyanPulseContainer
 import com.example.ui.theme.ElevatedSurface
 import com.example.ui.theme.EmeraldOk
 import com.example.ui.theme.HighSurface
+import com.example.ui.theme.LocalCalmVisualPrefs
+import com.example.ui.theme.LocalNephoPalette
 import com.example.ui.theme.MidnightSurface
+import com.example.ui.theme.MutedBorderFallbackPalette
+import com.example.ui.theme.MutedBorderGmail
+import com.example.ui.theme.MutedBorderGroupMe
+import com.example.ui.theme.MutedBorderMessages
+import com.example.ui.theme.MutedBorderOutlook
+import com.example.ui.theme.MutedBorderTeamSnap
+import com.example.ui.theme.MutedBorderTwitter
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
+import androidx.compose.runtime.setValue
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
 
-private val otherFeedColors = listOf(
-    Color(0xFFB5A7D1),
-    Color(0xFF8FBAB0),
-    Color(0xFFC5A8A2),
-    Color(0xFF9DAFD0),
-    Color(0xFFB8B590),
-    Color(0xFFB59DB9)
-)
-
 internal fun feedAppColor(packageName: String): Color =
     when (SupportedApp.fromPackageName(packageName)) {
-        SupportedApp.OUTLOOK -> Color(0xFF8FADD2)
-        SupportedApp.GMAIL -> Color(0xFFC99F9F)
-        SupportedApp.GROUPME -> Color(0xFF8ABDBD)
-        SupportedApp.TEAMSNAP -> Color(0xFFC5AD8E)
-        SupportedApp.MESSAGES -> Color(0xFF9ABB9D)
-        SupportedApp.TWITTER -> Color(0xFFA8A5CB)
-        SupportedApp.OTHER -> otherFeedColors[Math.floorMod(packageName.hashCode(), otherFeedColors.size)]
+        SupportedApp.OUTLOOK -> MutedBorderOutlook
+        SupportedApp.GMAIL -> MutedBorderGmail
+        SupportedApp.GROUPME -> MutedBorderGroupMe
+        SupportedApp.TEAMSNAP -> MutedBorderTeamSnap
+        SupportedApp.MESSAGES -> MutedBorderMessages
+        SupportedApp.TWITTER -> MutedBorderTwitter
+        SupportedApp.OTHER -> MutedBorderFallbackPalette[
+            Math.floorMod(packageName.hashCode(), MutedBorderFallbackPalette.size)
+        ]
     }
 
 @Composable
@@ -146,10 +151,12 @@ fun FeedTab(
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
     onDismissItem: (String) -> Unit,
     onOpenVaultTab: () -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    initialFiltersExpanded: Boolean = true
 ) {
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
     val collapsedGroups = remember { mutableStateMapOf<String, Boolean>() }
+    var filtersExpanded by rememberSaveable { mutableStateOf(initialFiltersExpanded) }
 
     LazyColumn(
         modifier = modifier
@@ -188,7 +195,15 @@ fun FeedTab(
             onClearGroup = onClearGroup,
             onOpenReminderDialog = onOpenReminderDialog,
             onDismissItem = onDismissItem,
-            onOpenVaultTab = onOpenVaultTab
+            onOpenVaultTab = onOpenVaultTab,
+            filtersExpanded = filtersExpanded,
+            onToggleFiltersExpanded = { filtersExpanded = !filtersExpanded },
+            onClearAllFilters = {
+                if (selectedAppFilter != null) onSelectAppFilter(null)
+                if (unreadOnly) onToggleUnreadOnly()
+                if (hasLinksOnly) onToggleHasLinksOnly()
+                if (starredOnly) onToggleStarredOnly()
+            }
         )
     }
 }
@@ -223,7 +238,11 @@ fun LazyListScope.feedSectionItems(
     onClearGroup: (packageName: String, appLabel: String) -> Unit,
     onOpenReminderDialog: (PulseNotificationItem) -> Unit,
     onDismissItem: (String) -> Unit,
-    onOpenVaultTab: () -> Unit
+    onOpenVaultTab: () -> Unit,
+    filtersExpanded: Boolean = true,
+    onToggleFiltersExpanded: () -> Unit = {},
+    onClearAllFilters: () -> Unit = {},
+    showSoothingQuotesWhenEmpty: Boolean = true
 ) {
         if (!isNotificationAccessGranted || !bannerDismissed) {
             item(key = "onboarding_banner") {
@@ -239,7 +258,82 @@ fun LazyListScope.feedSectionItems(
         }
 
         item(key = "search_and_filters") {
+            val palette = LocalNephoPalette.current
+            val hasActiveFilters = selectedAppFilter != null || unreadOnly || hasLinksOnly || starredOnly
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    val pillShape = RoundedCornerShape(12.dp)
+                    Surface(
+                        shape = pillShape,
+                        color = if (filtersExpanded || hasActiveFilters) palette.accentContainer else palette.surface,
+                        modifier = Modifier
+                            .minimumInteractiveComponentSize()
+                            .clip(pillShape)
+                            .calmingLitBorder(
+                                accentColor = if (hasActiveFilters) palette.calmBlue else palette.accent,
+                                cornerRadius = 12.dp,
+                                strokeWidth = 1.dp,
+                                intensity = CalmBorderIntensity.SUBTLE
+                            )
+                            .clickable(onClick = onToggleFiltersExpanded)
+                            .testTag("feed_filter_toggle_button")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Outlined.Tune,
+                                contentDescription = null,
+                                tint = if (filtersExpanded || hasActiveFilters) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                            Text(
+                                text = stringResource(R.string.calm_filter_button),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = if (filtersExpanded || hasActiveFilters) palette.accent else MaterialTheme.colorScheme.onSurface
+                            )
+                            Icon(
+                                imageVector = if (filtersExpanded) Icons.Default.ExpandLess else Icons.Default.ExpandMore,
+                                contentDescription = null,
+                                tint = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+
+                    if (hasActiveFilters) {
+                        Surface(
+                            shape = RoundedCornerShape(10.dp),
+                            color = palette.surface,
+                            modifier = Modifier
+                                .minimumInteractiveComponentSize()
+                                .clip(RoundedCornerShape(10.dp))
+                                .calmingLitBorder(
+                                    accentColor = palette.accent,
+                                    cornerRadius = 10.dp,
+                                    strokeWidth = 1.dp,
+                                    intensity = CalmBorderIntensity.SUBTLE
+                                )
+                                .clickable(onClick = onClearAllFilters)
+                                .testTag("feed_filter_clear_button")
+                        ) {
+                            Text(
+                                text = stringResource(R.string.calm_filter_clear),
+                                style = MaterialTheme.typography.labelMedium,
+                                color = palette.accent,
+                                modifier = Modifier.padding(horizontal = 12.dp, vertical = 7.dp)
+                            )
+                        }
+                    }
+                }
+
+                if (filtersExpanded) {
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -332,6 +426,7 @@ fun LazyListScope.feedSectionItems(
                         )
                     )
                 }
+                }
             }
         }
 
@@ -399,6 +494,10 @@ fun LazyListScope.feedSectionItems(
                     }
                 }
             }
+        } else if (selectedAppFilter == null && !unreadOnly && !hasLinksOnly && !starredOnly && isNotificationAccessGranted && showSoothingQuotesWhenEmpty) {
+            item(key = "empty_inbox_soothing_quote") {
+                SoothingQuotesCard()
+            }
         }
 }
 
@@ -412,12 +511,19 @@ private fun OnboardingIntakeBanner(
     onDismiss: () -> Unit
 ) {
     val accent = if (isNotificationAccessGranted) EmeraldOk else CyanPulse
+    val bannerShape = RoundedCornerShape(18.dp)
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(bannerShape)
+            .calmingLitBorder(
+                accentColor = accent,
+                cornerRadius = 18.dp,
+                strokeWidth = 1.2.dp,
+                intensity = CalmBorderIntensity.AMBIENT
+            )
             .testTag("onboarding_banner_card"),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(1.dp, accent.copy(alpha = 0.4f)),
+        shape = bannerShape,
         colors = CardDefaults.cardColors(containerColor = MidnightSurface)
     ) {
         Box(
@@ -573,15 +679,24 @@ private fun AppGroupHeader(
     modifier: Modifier = Modifier
 ) {
     val app = representative.supportedApp
+    val palette = LocalNephoPalette.current
+    val calmPrefs = LocalCalmVisualPrefs.current
+    val appBorderColor = feedAppColor(representative.packageName)
+    val headerShape = RoundedCornerShape(14.dp)
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .testTag("app_group_header_${representative.packageName}")
-            .clip(RoundedCornerShape(14.dp))
+            .clip(headerShape)
+            .calmingLitBorder(
+                accentColor = appBorderColor,
+                cornerRadius = 14.dp,
+                strokeWidth = if (unreadCount > 0) 1.35.dp else 1.1.dp,
+                intensity = if (unreadCount > 0) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.AMBIENT
+            )
             .clickable { onToggleCollapsed() },
-        shape = RoundedCornerShape(14.dp),
-        color = HighSurface,
-        border = BorderStroke(1.dp, feedAppColor(representative.packageName).copy(alpha = 0.65f))
+        shape = headerShape,
+        color = if (palette.isCalmMode) palette.elevatedSurface else HighSurface
     ) {
         Row(
             modifier = Modifier
@@ -613,26 +728,39 @@ private fun AppGroupHeader(
                         Text(
                             text = representative.appLabel,
                             style = MaterialTheme.typography.titleSmall.copy(fontWeight = FontWeight.Bold),
-                            color = app.accentColor,
+                            color = appBorderColor,
                             maxLines = 1,
                             overflow = TextOverflow.Ellipsis
                         )
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                             contentDescription = stringResource(R.string.action_open_app, representative.appLabel),
-                            tint = app.accentColor,
+                            tint = appBorderColor,
                             modifier = Modifier.size(13.dp)
                         )
                     }
-                    Text(
-                        text = if (unreadCount > 0) {
-                            "$totalCount alert${if (totalCount > 1) "s" else ""} • $unreadCount unread"
-                        } else {
-                            "$totalCount alert${if (totalCount > 1) "s" else ""}"
-                        },
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (calmPrefs.hideUnreadCounts) {
+                        Text(
+                            text = if (unreadCount > 0) {
+                                stringResource(R.string.group_status_new)
+                            } else {
+                                stringResource(R.string.group_status_read)
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("group_quiet_status_${representative.packageName}")
+                        )
+                    } else {
+                        Text(
+                            text = if (unreadCount > 0) {
+                                "$totalCount alert${if (totalCount > 1) "s" else ""} • $unreadCount unread"
+                            } else {
+                                "$totalCount alert${if (totalCount > 1) "s" else ""}"
+                            },
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
             }
 
@@ -828,17 +956,26 @@ private fun NotificationFeedCard(
     onOpenVaultTab: () -> Unit
 ) {
     val app = item.supportedApp
+    val palette = LocalNephoPalette.current
+    val appBorderColor = feedAppColor(item.packageName)
+    val cardShape = RoundedCornerShape(16.dp)
     val reminderFormatter = remember { SimpleDateFormat("MMM d, HH:mm", Locale.getDefault()) }
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(cardShape)
+            .calmingLitBorder(
+                accentColor = appBorderColor,
+                cornerRadius = 16.dp,
+                strokeWidth = if (!item.isRead) 1.5.dp else 1.1.dp,
+                intensity = if (!item.isRead) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.AMBIENT
+            )
             .testTag("notification_card_${item.key}")
             .clickable { onOpenThread() },
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(1.dp, feedAppColor(item.packageName).copy(alpha = 0.75f)),
+        shape = cardShape,
         colors = CardDefaults.cardColors(
-            containerColor = if (!item.isRead) ElevatedSurface else MidnightSurface
+            containerColor = if (!item.isRead) palette.elevatedSurface else palette.surface
         )
     ) {
         Box(modifier = Modifier.fillMaxWidth()) {
@@ -873,7 +1010,7 @@ private fun NotificationFeedCard(
                             Text(
                                 text = item.appLabel,
                                 style = MaterialTheme.typography.labelMedium,
-                                color = app.accentColor,
+                                color = appBorderColor,
                                 modifier = Modifier
                                     .clip(RoundedCornerShape(6.dp))
                                     .clickable { onOpenApp() }
@@ -884,7 +1021,7 @@ private fun NotificationFeedCard(
                                     modifier = Modifier
                                         .size(7.dp)
                                         .clip(CircleShape)
-                                        .background(CyanPulse)
+                                        .background(appBorderColor)
                                 )
                             }
                         }
@@ -898,45 +1035,47 @@ private fun NotificationFeedCard(
                     }
 
                     Row(verticalAlignment = Alignment.CenterVertically) {
-                        IconButton(
-                            onClick = onToggleStar,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("star_button_${item.key}")
-                        ) {
-                            Icon(
-                                imageVector = if (item.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
-                                contentDescription = if (item.isStarred) {
-                                    stringResource(R.string.action_unstar_message)
-                                } else {
-                                    stringResource(R.string.action_star_message)
-                                },
-                                tint = if (item.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(
-                            onClick = onOpenReminderDialog,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("remind_button_${item.key}")
-                        ) {
-                            Icon(
-                                imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
-                                contentDescription = stringResource(R.string.action_set_reminder),
-                                tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
-                            )
-                        }
-                        IconButton(
-                            onClick = onDismiss,
-                            modifier = Modifier
-                                .minimumInteractiveComponentSize()
-                                .testTag("dismiss_button_${item.key}")
-                        ) {
-                            Icon(
-                                imageVector = Icons.Default.Close,
-                                contentDescription = stringResource(R.string.action_dismiss),
-                                tint = MaterialTheme.colorScheme.onSurfaceVariant
-                            )
+                        if (!palette.isCalmMode) {
+                            IconButton(
+                                onClick = onToggleStar,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("star_button_${item.key}")
+                            ) {
+                                Icon(
+                                    imageVector = if (item.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
+                                    contentDescription = if (item.isStarred) {
+                                        stringResource(R.string.action_unstar_message)
+                                    } else {
+                                        stringResource(R.string.action_star_message)
+                                    },
+                                    tint = if (item.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = onOpenReminderDialog,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("remind_button_${item.key}")
+                            ) {
+                                Icon(
+                                    imageVector = if (item.reminderAt != null) Icons.Filled.AlarmOn else Icons.Outlined.AlarmAdd,
+                                    contentDescription = stringResource(R.string.action_set_reminder),
+                                    tint = if (item.reminderAt != null) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
+                            IconButton(
+                                onClick = onDismiss,
+                                modifier = Modifier
+                                    .minimumInteractiveComponentSize()
+                                    .testTag("dismiss_button_${item.key}")
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Close,
+                                    contentDescription = stringResource(R.string.action_dismiss),
+                                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                                )
+                            }
                         }
                         Text(
                             text = timeText,

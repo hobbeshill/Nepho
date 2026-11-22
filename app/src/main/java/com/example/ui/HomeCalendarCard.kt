@@ -52,16 +52,8 @@ import com.example.launcher.CalendarDayGroup
 import com.example.launcher.CalendarEventItem
 import com.example.launcher.CalendarScheduleProvider
 import com.example.launcher.CalendarScheduleState
-import com.example.ui.theme.BorderHairline
-import com.example.ui.theme.CyanPulse
-import com.example.ui.theme.CyanPulseContainer
-import com.example.ui.theme.ElevatedSurface
-import com.example.ui.theme.EmeraldOk
-import com.example.ui.theme.HighSurface
-import com.example.ui.theme.IndigoGlow
-import com.example.ui.theme.IndigoGlowContainer
-import com.example.ui.theme.MidnightSurface
-import com.example.ui.theme.ObsidianBackground
+import com.example.ui.theme.LocalCalmVisualPrefs
+import com.example.ui.theme.LocalNephoPalette
 
 @Composable
 fun HomeCalendarCard(
@@ -70,19 +62,29 @@ fun HomeCalendarCard(
     onRefresh: () -> Unit,
     onOpenEvent: (CalendarEventItem) -> Unit,
     onOpenCalendarApp: () -> Unit,
+    onMinimize: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val palette = LocalNephoPalette.current
+    val calmPrefs = LocalCalmVisualPrefs.current
     val is24Hour = remember(context) { DateFormat.is24HourFormat(context) }
     val allDayLabel = stringResource(R.string.calendar_all_day)
 
+    val calendarCardShape = RoundedCornerShape(20.dp)
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .clip(calendarCardShape)
+            .calmingLitBorder(
+                accentColor = palette.accent,
+                cornerRadius = 20.dp,
+                strokeWidth = 1.15.dp,
+                intensity = CalmBorderIntensity.AMBIENT
+            )
             .testTag("home_calendar_card"),
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, BorderHairline),
-        colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+        shape = calendarCardShape,
+        colors = CardDefaults.cardColors(containerColor = palette.surface)
     ) {
         Column(
             modifier = Modifier
@@ -96,17 +98,25 @@ fun HomeCalendarCard(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(10.dp)
             ) {
+                val iconTileShape = RoundedCornerShape(12.dp)
                 Surface(
-                    shape = RoundedCornerShape(12.dp),
-                    color = CyanPulseContainer,
-                    border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.35f)),
-                    modifier = Modifier.size(38.dp)
+                    shape = iconTileShape,
+                    color = palette.accentContainer,
+                    modifier = Modifier
+                        .size(38.dp)
+                        .clip(iconTileShape)
+                        .calmingLitBorder(
+                            accentColor = palette.accent,
+                            cornerRadius = 12.dp,
+                            strokeWidth = 1.dp,
+                            intensity = CalmBorderIntensity.SUBTLE
+                        )
                 ) {
                     Box(contentAlignment = Alignment.Center) {
                         Icon(
                             imageVector = Icons.Filled.CalendarMonth,
                             contentDescription = null,
-                            tint = CyanPulse,
+                            tint = palette.accent,
                             modifier = Modifier.size(20.dp)
                         )
                     }
@@ -130,17 +140,18 @@ fun HomeCalendarCard(
                             overflow = TextOverflow.Ellipsis,
                             modifier = Modifier.testTag("home_calendar_title")
                         )
-                        if (scheduleState.hasPermission && scheduleState.totalEventCount > 0) {
+                        if (scheduleState.hasPermission && scheduleState.totalEventCount > 0 && !calmPrefs.hideUnreadCounts) {
                             Surface(
                                 shape = CircleShape,
-                                color = CyanPulseContainer
+                                color = palette.accentContainer,
+                                modifier = Modifier.testTag("calendar_total_count_badge")
                             ) {
                                 Text(
                                     text = scheduleState.totalEventCount.toString(),
                                     style = MaterialTheme.typography.labelSmall.copy(
                                         fontWeight = FontWeight.Bold
                                     ),
-                                    color = CyanPulse,
+                                    color = palette.accent,
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 1.dp)
                                 )
                             }
@@ -168,7 +179,7 @@ fun HomeCalendarCard(
                                 CircularProgressIndicator(
                                     modifier = Modifier.size(18.dp),
                                     strokeWidth = 2.dp,
-                                    color = CyanPulse
+                                    color = palette.accent
                                 )
                             } else {
                                 Icon(
@@ -190,20 +201,36 @@ fun HomeCalendarCard(
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                             contentDescription = stringResource(R.string.calendar_open_app),
-                            tint = CyanPulse,
+                            tint = palette.accent,
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    if (onMinimize != null) {
+                        SectionCollapseIconButton(
+                            minimized = false,
+                            sectionName = stringResource(R.string.home_section_calendar),
+                            onToggle = onMinimize,
+                            testTag = "minimize_section_calendar"
                         )
                     }
                 }
             }
 
             if (!scheduleState.hasPermission) {
+                val promptShape = RoundedCornerShape(14.dp)
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = ElevatedSurface,
-                    border = BorderStroke(1.dp, BorderHairline),
+                    shape = promptShape,
+                    color = palette.elevatedSurface,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(promptShape)
+                        .calmingLitBorder(
+                            accentColor = palette.accent,
+                            cornerRadius = 14.dp,
+                            strokeWidth = 1.dp,
+                            intensity = CalmBorderIntensity.SUBTLE
+                        )
                         .testTag("calendar_permission_prompt")
                 ) {
                     Column(
@@ -219,7 +246,7 @@ fun HomeCalendarCard(
                             Icon(
                                 imageVector = Icons.Outlined.EventAvailable,
                                 contentDescription = null,
-                                tint = CyanPulse,
+                                tint = palette.accent,
                                 modifier = Modifier.size(18.dp)
                             )
                             Text(
@@ -238,8 +265,8 @@ fun HomeCalendarCard(
                         Button(
                             onClick = onRequestCalendarPermission,
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = CyanPulse,
-                                contentColor = ObsidianBackground
+                                containerColor = palette.accent,
+                                contentColor = palette.background
                             ),
                             shape = RoundedCornerShape(12.dp),
                             modifier = Modifier
@@ -268,7 +295,7 @@ fun HomeCalendarCard(
                 ) {
                     daysToDisplay.forEachIndexed { index, dayGroup ->
                         if (index > 0) {
-                            HorizontalDivider(color = BorderHairline.copy(alpha = 0.65f))
+                            HorizontalDivider(color = palette.border.copy(alpha = 0.65f))
                         }
                         CalendarDaySection(
                             dayGroup = dayGroup,
@@ -290,15 +317,17 @@ private fun CalendarDaySection(
     allDayLabel: String,
     onOpenEvent: (CalendarEventItem) -> Unit
 ) {
+    val palette = LocalNephoPalette.current
+    val calmPrefs = LocalCalmVisualPrefs.current
     val dayAccent = when (dayGroup.dayOffset) {
-        0 -> CyanPulse
-        1 -> IndigoGlow
-        else -> EmeraldOk
+        0 -> palette.accent
+        1 -> palette.secondaryAccent
+        else -> palette.emerald
     }
     val dayBadgeContainer = when (dayGroup.dayOffset) {
-        0 -> CyanPulseContainer
-        1 -> IndigoGlowContainer
-        else -> HighSurface
+        0 -> palette.accentContainer
+        1 -> palette.secondaryContainer
+        else -> palette.highSurface
     }
 
     Column(
@@ -316,10 +345,18 @@ private fun CalendarDaySection(
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
+                val dayBadgeShape = RoundedCornerShape(8.dp)
                 Surface(
-                    shape = RoundedCornerShape(8.dp),
+                    shape = dayBadgeShape,
                     color = dayBadgeContainer,
-                    border = BorderStroke(1.dp, dayAccent.copy(alpha = 0.35f))
+                    modifier = Modifier
+                        .clip(dayBadgeShape)
+                        .calmingLitBorder(
+                            accentColor = dayAccent,
+                            cornerRadius = 8.dp,
+                            strokeWidth = 1.dp,
+                            intensity = CalmBorderIntensity.SUBTLE
+                        )
                 ) {
                     Text(
                         text = dayGroup.dayTitle,
@@ -341,7 +378,7 @@ private fun CalendarDaySection(
                 )
             }
 
-            if (dayGroup.events.isNotEmpty()) {
+            if (dayGroup.events.isNotEmpty() && !calmPrefs.hideUnreadCounts) {
                 Text(
                     text = "${dayGroup.events.size}",
                     style = MaterialTheme.typography.labelSmall.copy(
@@ -390,12 +427,17 @@ private fun CalendarEventRow(
     allDayLabel: String,
     onClick: () -> Unit
 ) {
-    val accentColor = remember(event.calendarColor, fallbackAccent) {
-        val raw = event.calendarColor
-        if (raw != null && raw != 0) {
-            Color(raw).copy(alpha = 1f)
-        } else {
+    val palette = LocalNephoPalette.current
+    val accentColor = remember(event.calendarColor, fallbackAccent, palette.isCalmMode) {
+        if (palette.isCalmMode) {
             fallbackAccent
+        } else {
+            val raw = event.calendarColor
+            if (raw != null && raw != 0) {
+                Color(raw).copy(alpha = 1f)
+            } else {
+                fallbackAccent
+            }
         }
     }
     val timeText = remember(event, is24Hour, allDayLabel) {
@@ -406,14 +448,20 @@ private fun CalendarEventRow(
         )
     }
 
+    val eventRowShape = RoundedCornerShape(12.dp)
     Surface(
-        shape = RoundedCornerShape(12.dp),
-        color = ElevatedSurface,
-        border = BorderStroke(1.dp, BorderHairline),
+        shape = eventRowShape,
+        color = palette.elevatedSurface,
         modifier = Modifier
             .fillMaxWidth()
             .minimumInteractiveComponentSize()
-            .clip(RoundedCornerShape(12.dp))
+            .clip(eventRowShape)
+            .calmingLitBorder(
+                accentColor = accentColor,
+                cornerRadius = 12.dp,
+                strokeWidth = 1.dp,
+                intensity = CalmBorderIntensity.SUBTLE
+            )
             .clickable(onClick = onClick)
             .testTag("calendar_event_${event.eventId}_$dayOffset")
     ) {
@@ -454,7 +502,7 @@ private fun CalendarEventRow(
                     Text(
                         text = timeText,
                         style = MaterialTheme.typography.labelSmall,
-                        color = if (event.allDay) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant,
+                        color = if (event.allDay) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                         maxLines = 1
                     )
                     if (event.location.isNotBlank()) {

@@ -1892,6 +1892,291 @@ class ExampleRobolectricTest {
         assertEquals(Intent.ACTION_VIEW, searchIntents.last().action)
         assertEquals("https://www.google.com", searchIntents.last().data.toString())
     }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `listener skips gmail dismiss toasts and system messages while capturing real communication`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        repo.clearCaptureDiagnostics()
+
+        val now = System.currentTimeMillis() + 100
+        val serviceController = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val service = serviceController.get()
+
+        fun makeSbn(pkg: String, id: Int, notification: Notification, offsetMs: Long): StatusBarNotification =
+            StatusBarNotification(
+                pkg, pkg, id, null, Process.myUid(), Process.myPid(), 0,
+                notification, Process.myUserHandle(), now + offsetMs
+            )
+
+        try {
+            // 1. Gmail dismiss/archive toast with Undo action -> skipped
+            val undoIntent = PendingIntent.getBroadcast(
+                context, 9901, Intent("com.example.UNDO_TEST"), PendingIntent.FLAG_IMMUTABLE
+            )
+            val gmailUndoToast = Notification.Builder(context, "gmail_mail")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setCategory(Notification.CATEGORY_EMAIL)
+                .setContentTitle("Archived")
+                .setContentText("Tap to undo")
+                .addAction(Notification.Action.Builder(null, "Undo", undoIntent).build())
+                .build()
+            val gmailUndoSbn = makeSbn(SupportedApp.GMAIL.packageName, 2001, gmailUndoToast, 1)
+
+            // 2. Gmail delete confirmation without Undo button -> skipped
+            val gmailDeletedToast = Notification.Builder(context, "gmail_mail")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("1 deleted")
+                .setContentText("user@gmail.com")
+                .build()
+            val gmailDeletedSbn = makeSbn(SupportedApp.GMAIL.packageName, 2002, gmailDeletedToast, 2)
+
+            // 3. Gmail background sync / attachment progress -> skipped
+            val gmailProgress = Notification.Builder(context, "gmail_mail")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Gmail")
+                .setContentText("Downloading attachment...")
+                .setProgress(100, 40, false)
+                .build()
+            val gmailProgressSbn = makeSbn(SupportedApp.GMAIL.packageName, 2003, gmailProgress, 3)
+
+            // 4. WhatsApp system status notice ("WhatsApp Web is currently active") -> skipped
+            val whatsappWeb = Notification.Builder(context, "other_notifications")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("WhatsApp")
+                .setContentText("WhatsApp Web is currently active")
+                .build()
+            val whatsappWebSbn = makeSbn("com.whatsapp", 2004, whatsappWeb, 4)
+
+            // 5. Android System UI notification -> skipped
+            val systemUi = Notification.Builder(context, "screenshots")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Screenshot saved")
+                .setContentText("Tap to view your screenshot")
+                .build()
+            val systemUiSbn = makeSbn("com.android.systemui", 2005, systemUi, 5)
+
+            // 6. Non-communication utility app (no communication category/style) -> skipped
+            val utilityAlert = Notification.Builder(context, "general")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Rain starting soon")
+                .setContentText("Light rain expected in 15 minutes")
+                .build()
+            val utilitySbn = makeSbn("com.example.weatherapp", 2006, utilityAlert, 6)
+
+            // 7. Real Gmail email -> CAPTURED
+            val realGmail = Notification.Builder(context, "mail_account")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setCategory(Notification.CATEGORY_EMAIL)
+                .setContentTitle("Alice Chen")
+                .setContentText("Q4 budget review is ready for your feedback")
+                .build()
+            val realGmailSbn = makeSbn(SupportedApp.GMAIL.packageName, 2007, realGmail, 7)
+
+            // 8. Real MessagingStyle SMS whose text happens to be "Deleted" -> CAPTURED
+            val realChatDeletedWord = Notification.Builder(context, "messages")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .setStyle(
+                    Notification.MessagingStyle("Me")
+                        .addMessage(Notification.MessagingStyle.Message("Deleted", now + 8, "Jordan"))
+                )
+                .build()
+            val realChatSbn = makeSbn(SupportedApp.MESSAGES.packageName, 2008, realChatDeletedWord, 8)
+
+            // 9. Custom third-party chat app with CATEGORY_MESSAGE -> CAPTURED
+            val customChat = Notification.Builder(context, "direct_messages")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setCategory(Notification.CATEGORY_MESSAGE)
+                .setContentTitle("Sam")
+                .setContentText("Are you free at 4?")
+                .build()
+            val customChatSbn = makeSbn("com.custom.chatapp", 2009, customChat, 9)
+
+            val allSbns = listOf(
+                gmailUndoSbn,
+                gmailDeletedSbn,
+                gmailProgressSbn,
+                whatsappWebSbn,
+                systemUiSbn,
+                utilitySbn,
+                realGmailSbn,
+                realChatSbn,
+                customChatSbn
+            )
+            for (sbn in allSbns) {
+                service.processPostedNotification(repo, sbn, isCatchUp = false, activeSnapshot = listOf(sbn))
+            }
+
+            // Verify all system/toast/non-communication notifications were skipped
+            assertEquals(null, repo.getNotificationByKey(gmailUndoSbn.key))
+            assertEquals(null, repo.getNotificationByKey(gmailDeletedSbn.key))
+            assertEquals(null, repo.getNotificationByKey(gmailProgressSbn.key))
+            assertEquals(null, repo.getNotificationByKey(whatsappWebSbn.key))
+            assertEquals(null, repo.getNotificationByKey(systemUiSbn.key))
+            assertEquals(null, repo.getNotificationByKey(utilitySbn.key))
+
+            // Verify all genuine communication messages were captured
+            assertNotNull(repo.getNotificationByKey(realGmailSbn.key))
+            assertNotNull(repo.getNotificationByKey(realChatSbn.key))
+            assertNotNull(repo.getNotificationByKey(customChatSbn.key))
+
+            val diagnostics = repo.captureDiagnosticsFlow.first()
+            assertTrue(
+                diagnostics.count { it.outcome == CaptureOutcome.SKIPPED_SYSTEM_MESSAGE.name } >= 6
+            )
+
+            // Verify display-layer guard also hides stale stored Gmail dismiss toasts while keeping real & manual items
+            val staleToastItem = com.example.data.PulseNotificationItem(
+                key = "stale_gmail_toast",
+                notificationId = 3001,
+                packageName = SupportedApp.GMAIL.packageName,
+                appLabel = "Gmail",
+                title = "1 archived",
+                body = "Undo",
+                postTime = now,
+                isRead = false,
+                isDismissed = false,
+                canReply = false,
+                secondaryActions = listOf("Undo"),
+                replies = emptyList(),
+                urls = emptyList(),
+                sourceChannel = "LISTENER"
+            )
+            val realEmailItem = staleToastItem.copy(
+                key = "real_gmail_item",
+                title = "Alice Chen",
+                body = "Q4 budget review is ready",
+                secondaryActions = listOf("Archive", "Reply")
+            )
+            val manualItem = staleToastItem.copy(
+                key = "manual_item",
+                title = "Archived",
+                body = "Archived",
+                secondaryActions = emptyList(),
+                sourceChannel = "MANUAL"
+            )
+            assertFalse(com.example.notifications.CommunicationMessageFilter.shouldDisplayInFeed(staleToastItem))
+            assertTrue(com.example.notifications.CommunicationMessageFilter.shouldDisplayInFeed(realEmailItem))
+            assertTrue(com.example.notifications.CommunicationMessageFilter.shouldDisplayInFeed(manualItem))
+        } finally {
+            serviceController.destroy()
+            repo.resetSession()
+        }
+    }
+
+    @Test
+    @Suppress("DEPRECATION")
+    fun `shade actions on Nepho alerts and external notifications sync cleanly with the feed`() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repo = PulseRepository.getInstance(context)
+        repo.resetSession()
+        repo.clearCaptureDiagnostics()
+
+        val now = System.currentTimeMillis() + 100
+        val receiver = com.example.notifications.PulseActionReceiver()
+        val serviceController = Robolectric.buildService(NephoNotificationListener::class.java).create()
+        val service = serviceController.get()
+
+        try {
+            // 1. Swipe/clear Nepho shade notification via deleteIntent (ACTION_SWIPE_DISMISS) -> dismissed in Feed
+            ingest(repo, "shade_swipe_1", SupportedApp.GMAIL, "Pat", "Meeting moved to 3pm", now)
+            receiver.handleAction(
+                context = context,
+                repository = repo,
+                action = com.example.notifications.PulseActionReceiver.ACTION_SWIPE_DISMISS,
+                key = "shade_swipe_1",
+                notificationId = 4101
+            )
+            assertTrue(repo.getNotificationByKey("shade_swipe_1")!!.isDismissed)
+
+            // 2. Reply from Nepho shade -> records reply and dismisses in Feed
+            ingest(repo, "shade_reply_1", SupportedApp.MESSAGES, "Taylor", "On my way?", now + 1, canReply = true)
+            receiver.handleAction(
+                context = context,
+                repository = repo,
+                action = com.example.notifications.PulseActionReceiver.ACTION_REPLY,
+                key = "shade_reply_1",
+                notificationId = 4102,
+                replyText = "See you in 5!"
+            )
+            val replied = repo.getNotificationByKey("shade_reply_1")!!
+            assertTrue(replied.isDismissed)
+            assertTrue(replied.isRead)
+            assertTrue(replied.repliesJson.contains("See you in 5!"))
+
+            // 3. Star toggle from Nepho shade -> syncs isStarred in Feed
+            ingest(repo, "shade_star_1", SupportedApp.OUTLOOK, "Finance", "Invoice attached", now + 2)
+            assertFalse(repo.getNotificationByKey("shade_star_1")!!.isStarred)
+            receiver.handleAction(
+                context = context,
+                repository = repo,
+                action = com.example.notifications.PulseActionReceiver.ACTION_STAR,
+                key = "shade_star_1",
+                notificationId = 4103
+            )
+            assertTrue(repo.getNotificationByKey("shade_star_1")!!.isStarred)
+
+            // 4. Nepho shade alert removed via NotificationListenerService (REASON_CANCEL_ALL) -> dismissed in Feed
+            ingest(repo, "shade_nepho_clear_all", SupportedApp.GROUPME, "Crew", "Dinner tonight?", now + 3)
+            val nephoNotif = Notification.Builder(context, com.example.notifications.LocalPulseNotifier.CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("[GroupMe] Crew")
+                .setContentText("Dinner tonight?")
+                .addExtras(android.os.Bundle().apply {
+                    putString(com.example.notifications.LocalPulseNotifier.EXTRA_NEPHO_KEY, "shade_nepho_clear_all")
+                })
+                .build()
+            val nephoSbn = StatusBarNotification(
+                context.packageName, context.packageName, 4104, null,
+                Process.myUid(), Process.myPid(), 0, nephoNotif, Process.myUserHandle(), now + 3
+            )
+            service.handleNotificationRemoved(repo, nephoSbn, NotificationListenerService.REASON_CANCEL_ALL)
+            assertTrue(repo.getNotificationByKey("shade_nepho_clear_all")!!.isDismissed)
+
+            // 5. Nepho shade alert tapped (REASON_CLICK) -> marks read without dismissing so thread stays openable
+            ingest(repo, "shade_nepho_click", SupportedApp.MESSAGES, "Jordan", "Call me when free", now + 4)
+            val nephoClickNotif = Notification.Builder(context, com.example.notifications.LocalPulseNotifier.CHANNEL_ID)
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("[Messages] Jordan")
+                .setContentText("Call me when free")
+                .addExtras(android.os.Bundle().apply {
+                    putString(com.example.notifications.LocalPulseNotifier.EXTRA_NEPHO_KEY, "shade_nepho_click")
+                })
+                .build()
+            val nephoClickSbn = StatusBarNotification(
+                context.packageName, context.packageName, 4105, null,
+                Process.myUid(), Process.myPid(), 0, nephoClickNotif, Process.myUserHandle(), now + 4
+            )
+            service.handleNotificationRemoved(repo, nephoClickSbn, NotificationListenerService.REASON_CLICK)
+            val clickedItem = repo.getNotificationByKey("shade_nepho_click")!!
+            assertTrue(clickedItem.isRead)
+            assertFalse(clickedItem.isDismissed)
+
+            // 6. External app group swipe (REASON_GROUP_SUMMARY_CANCELED) -> syncs dismissal in Feed
+            val extNotif = Notification.Builder(context, "mail")
+                .setSmallIcon(R.drawable.ic_launcher_foreground)
+                .setContentTitle("Alice")
+                .setContentText("Project notes")
+                .build()
+            val extSbn = StatusBarNotification(
+                SupportedApp.GMAIL.packageName, SupportedApp.GMAIL.packageName, 4106, null,
+                Process.myUid(), Process.myPid(), 0, extNotif, Process.myUserHandle(), now + 5
+            )
+            ingest(repo, extSbn.key, SupportedApp.GMAIL, "Alice", "Project notes", now + 5)
+            service.handleNotificationRemoved(repo, extSbn, NotificationListenerService.REASON_GROUP_SUMMARY_CANCELED)
+            assertTrue(repo.getNotificationByKey(extSbn.key)!!.isDismissed)
+
+            val logs = repo.captureDiagnosticsFlow.first()
+            assertTrue(logs.count { it.outcome == CaptureOutcome.SYNCED_REMOVAL.name } >= 4)
+        } finally {
+            repo.toggleNotificationStar("shade_star_1")
+            serviceController.destroy()
+            repo.resetSession()
+        }
+    }
 }
 
 

@@ -22,7 +22,10 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.outlined.DeleteOutline
 import androidx.compose.material.icons.outlined.HealthAndSafety
 import androidx.compose.material.icons.outlined.Refresh
+import androidx.compose.material.icons.outlined.RestartAlt
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Button
+import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.FilterChipDefaults
 import androidx.compose.material3.HorizontalDivider
@@ -82,7 +85,8 @@ fun CaptureDiagnosticsDialog(
     onRequestNotificationPermission: () -> Unit,
     onOpenBatterySettings: () -> Unit,
     onClearLog: () -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    onRestartNepho: (() -> Unit)? = null
 ) {
     var selectedFilter by rememberSaveable { mutableStateOf(DiagnosticsFilter.ALL) }
     val timeFormatter = remember { SimpleDateFormat("HH:mm:ss", Locale.getDefault()) }
@@ -132,7 +136,8 @@ fun CaptureDiagnosticsDialog(
                     onRequestRebind = onRequestRebind,
                     onOpenNotificationAccessSettings = onOpenNotificationAccessSettings,
                     onRequestNotificationPermission = onRequestNotificationPermission,
-                    onOpenBatterySettings = onOpenBatterySettings
+                    onOpenBatterySettings = onOpenBatterySettings,
+                    onRestartNepho = onRestartNepho
                 )
 
                 HorizontalDivider(color = BorderHairline)
@@ -197,11 +202,19 @@ fun CaptureDiagnosticsDialog(
                 }
 
                 if (filteredEntries.isEmpty()) {
+                    val emptyShape = RoundedCornerShape(12.dp)
                     Surface(
-                        shape = RoundedCornerShape(12.dp),
+                        shape = emptyShape,
                         color = ElevatedSurface,
-                        border = BorderStroke(1.dp, BorderHairline),
-                        modifier = Modifier.fillMaxWidth()
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .clip(emptyShape)
+                            .calmingLitBorder(
+                                accentColor = CyanPulse,
+                                cornerRadius = 12.dp,
+                                strokeWidth = 1.dp,
+                                intensity = CalmBorderIntensity.SUBTLE
+                            )
                     ) {
                         Column(
                             modifier = Modifier.padding(14.dp),
@@ -258,13 +271,23 @@ private fun ListenerHealthCard(
     onRequestRebind: () -> Unit,
     onOpenNotificationAccessSettings: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
-    onOpenBatterySettings: () -> Unit
+    onOpenBatterySettings: () -> Unit,
+    onRestartNepho: (() -> Unit)? = null
 ) {
+    val isYellowStatus = health.isAccessGranted && !health.isListenerConnected
+    val healthCardShape = RoundedCornerShape(14.dp)
     Surface(
-        shape = RoundedCornerShape(14.dp),
+        shape = healthCardShape,
         color = ElevatedSurface,
-        border = BorderStroke(1.dp, BorderHairline),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(healthCardShape)
+            .calmingLitBorder(
+                accentColor = if (isYellowStatus) AmberSignal else CyanPulse,
+                cornerRadius = 14.dp,
+                strokeWidth = if (isYellowStatus) 1.35.dp else 1.1.dp,
+                intensity = if (isYellowStatus) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.AMBIENT
+            )
     ) {
         Column(
             modifier = Modifier.padding(12.dp),
@@ -332,6 +355,38 @@ private fun ListenerHealthCard(
                     }
                 }
             )
+
+            if (onRestartNepho != null && health.isAccessGranted) {
+                Button(
+                    onClick = onRestartNepho,
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (isYellowStatus) AmberSignalContainer else CyanPulseContainer,
+                        contentColor = if (isYellowStatus) AmberSignal else CyanPulse
+                    ),
+                    shape = RoundedCornerShape(12.dp),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .minimumInteractiveComponentSize()
+                        .calmingLitBorder(
+                            accentColor = if (isYellowStatus) AmberSignal else CyanPulse,
+                            cornerRadius = 12.dp,
+                            strokeWidth = 1.1.dp,
+                            intensity = if (isYellowStatus) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.SUBTLE
+                        )
+                        .testTag("diagnostics_restart_nepho_button")
+                ) {
+                    Icon(
+                        imageVector = Icons.Outlined.RestartAlt,
+                        contentDescription = null,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(6.dp))
+                    Text(
+                        text = stringResource(R.string.diagnostics_action_restart_nepho),
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
+            }
 
             HealthStatusRow(
                 label = stringResource(R.string.diagnostics_shade_perm_label),
@@ -461,11 +516,19 @@ private fun DiagnosticEntryRow(
     timeText: String
 ) {
     val (badgeLabel, badgeTextColor, badgeBgColor) = outcomeBadgeStyle(entry.outcome)
+    val rowShape = RoundedCornerShape(10.dp)
     Surface(
-        shape = RoundedCornerShape(10.dp),
+        shape = rowShape,
         color = ElevatedSurface,
-        border = BorderStroke(1.dp, BorderHairline),
-        modifier = Modifier.fillMaxWidth()
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(rowShape)
+            .calmingLitBorder(
+                accentColor = badgeTextColor,
+                cornerRadius = 10.dp,
+                strokeWidth = 1.dp,
+                intensity = CalmBorderIntensity.SUBTLE
+            )
     ) {
         Column(
             modifier = Modifier.padding(10.dp),
@@ -521,6 +584,7 @@ private fun outcomeBadgeStyle(outcomeName: String): Triple<String, Color, Color>
     CaptureOutcome.SKIPPED_OPTED_OUT.name -> Triple("OPTED OUT", AmberSignal, AmberSignalContainer)
     CaptureOutcome.SKIPPED_GROUP_SUMMARY.name -> Triple("SUMMARY SKIPPED", AmberSignal, AmberSignalContainer)
     CaptureOutcome.SKIPPED_PRE_SESSION.name -> Triple("PRE-SESSION", AmberSignal, AmberSignalContainer)
+    CaptureOutcome.SKIPPED_SYSTEM_MESSAGE.name -> Triple("SYSTEM SKIPPED", AmberSignal, AmberSignalContainer)
     CaptureOutcome.FALLBACK_KEPT_ORIGINAL.name -> Triple("KEPT ORIGINAL", AmberSignal, AmberSignalContainer)
     CaptureOutcome.SELF_CANCEL_IGNORED.name -> Triple("RACE GUARD", CyanPulse, CyanPulseContainer)
     CaptureOutcome.SYNCED_REMOVAL.name -> Triple("SYNCED CLEAR", AmberSignal, AmberSignalContainer)

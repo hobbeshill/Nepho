@@ -108,52 +108,84 @@ class NephoNotificationListener : NotificationListenerService() {
     ) {
         super.onNotificationRemoved(sbn, rankingMap, reason)
         if (sbn == null) return
-        if (sbn.packageName == applicationContext.packageName) return
 
         val repository = PulseRepository.getInstance(applicationContext)
         serviceScope.launch {
-            // Skip non-syncable removals (e.g. REASON_LISTENER_CANCEL, system housekeeping)
-            if (reason !in SYNCABLE_REMOVAL_REASONS) {
-                selfCanceledPostTimes.remove(sbn.key, sbn.postTime)
-                return@launch
-            }
+            handleNotificationRemoved(repository, sbn, reason)
+        }
+    }
 
-            // Guard against race conditions where Android or the source app fires a syncable
-            // removal callback immediately after Nepho itself suppressed this exact postTime.
-            if (selfCanceledPostTimes.remove(sbn.key, sbn.postTime)) {
-                val appLabel = resolveAppLabel(sbn.packageName)
-                val titlePreview = sbn.notification?.extras
-                    ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-                    .orEmpty()
-                    .ifEmpty { appLabel }
-                repository.recordCaptureDiagnostic(
-                    packageName = sbn.packageName,
-                    appLabel = appLabel,
-                    titlePreview = titlePreview,
-                    outcome = CaptureOutcome.SELF_CANCEL_IGNORED,
-                    detail = "Ignored removal callback (${removalReasonLabel(reason)}) matching Nepho's own shade suppression."
-                )
-                return@launch
+    internal suspend fun handleNotificationRemoved(
+        repository: PulseRepository,
+        sbn: StatusBarNotification,
+        reason: Int
+    ) {
+        // Sync user actions on Nepho's own re-posted shade alerts back into the Feed
+        if (sbn.packageName == applicationContext.packageName) {
+            val nephoKey = sbn.notification?.extras?.getString(LocalPulseNotifier.EXTRA_NEPHO_KEY)
+                ?: return
+            when {
+                reason in NEPHO_SHADE_DISMISS_REASONS -> {
+                    val existing = repository.getNotificationByKey(nephoKey)
+                    val synced = repository.syncDismissalFromSystem(key = nephoKey)
+                    if (synced && existing != null) {
+                        repository.recordCaptureDiagnostic(
+                            packageName = existing.packageName,
+                            appLabel = existing.appLabel,
+                            titlePreview = existing.title,
+                            outcome = CaptureOutcome.SYNCED_REMOVAL,
+                            detail = "Dismissed in Nepho to match shade removal (${removalReasonLabel(reason)})."
+                        )
+                    }
+                }
+                reason == REASON_CLICK -> {
+                    repository.markAsRead(nephoKey)
+                }
             }
+            return
+        }
 
-            val synced = repository.syncDismissalFromSystem(
-                key = sbn.key,
-                removedPostTime = sbn.postTime
+        // Skip non-syncable removals (e.g. REASON_LISTENER_CANCEL, system housekeeping)
+        if (reason !in SYNCABLE_REMOVAL_REASONS) {
+            selfCanceledPostTimes.remove(sbn.key, sbn.postTime)
+            return
+        }
+
+        // Guard against race conditions where Android or the source app fires a syncable
+        // removal callback immediately after Nepho itself suppressed this exact postTime.
+        if (selfCanceledPostTimes.remove(sbn.key, sbn.postTime)) {
+            val appLabel = resolveAppLabel(sbn.packageName)
+            val titlePreview = sbn.notification?.extras
+                ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+                .orEmpty()
+                .ifEmpty { appLabel }
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = titlePreview,
+                outcome = CaptureOutcome.SELF_CANCEL_IGNORED,
+                detail = "Ignored removal callback (${removalReasonLabel(reason)}) matching Nepho's own shade suppression."
             )
-            if (synced) {
-                val appLabel = resolveAppLabel(sbn.packageName)
-                val titlePreview = sbn.notification?.extras
-                    ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
-                    .orEmpty()
-                    .ifEmpty { appLabel }
-                repository.recordCaptureDiagnostic(
-                    packageName = sbn.packageName,
-                    appLabel = appLabel,
-                    titlePreview = titlePreview,
-                    outcome = CaptureOutcome.SYNCED_REMOVAL,
-                    detail = "Dismissed in Nepho to match removal outside Nepho (${removalReasonLabel(reason)})."
-                )
-            }
+            return
+        }
+
+        val synced = repository.syncDismissalFromSystem(
+            key = sbn.key,
+            removedPostTime = sbn.postTime
+        )
+        if (synced) {
+            val appLabel = resolveAppLabel(sbn.packageName)
+            val titlePreview = sbn.notification?.extras
+                ?.getCharSequence(Notification.EXTRA_TITLE)?.toString()?.trim()
+                .orEmpty()
+                .ifEmpty { appLabel }
+            repository.recordCaptureDiagnostic(
+                packageName = sbn.packageName,
+                appLabel = appLabel,
+                titlePreview = titlePreview,
+                outcome = CaptureOutcome.SYNCED_REMOVAL,
+                detail = "Dismissed in Nepho to match removal outside Nepho (${removalReasonLabel(reason)})."
+            )
         }
     }
 
@@ -195,7 +227,10 @@ class NephoNotificationListener : NotificationListenerService() {
     ) {
         val notification = sbn.notification ?: return
         // Ignore ongoing/persistent system notifications (foreground services, media players, charging)
-        if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0) return
+        if ((notification.flags and Notification.FLAG_ONGOING_EVENT) != 0 ||
+            (notification.flags and Notification.FLAG_FOREGROUND_SERVICE) != 0 ||
+            (notification.flags and Notification.FLAG_NO_CLEAR) != 0
+        ) return
 
         val appLabel = resolveAppLabel(sbn.packageName)
         val extracted = extractNotificationContent(notification, appLabel)
@@ -229,6 +264,26 @@ class NephoNotificationListener : NotificationListenerService() {
         val finalTitle = extracted.title.ifEmpty { appLabel }
         val finalBody = extracted.body.ifEmpty {
             if (extracted.hasMedia) "Media attachment" else finalTitle
+        }
+
+        val filterDecision = CommunicationMessageFilter.evaluateIncoming(
+            sbn = sbn,
+            extracted = extracted,
+            resolvedTitle = finalTitle,
+            resolvedBody = finalBody,
+            appLabel = appLabel
+        )
+        if (!filterDecision.isCommunication) {
+            if (!filterDecision.isSilentOngoing) {
+                repository.recordCaptureDiagnostic(
+                    packageName = sbn.packageName,
+                    appLabel = appLabel,
+                    titlePreview = finalTitle,
+                    outcome = CaptureOutcome.SKIPPED_SYSTEM_MESSAGE,
+                    detail = filterDecision.reason ?: "Skipped non-communication system/status notification."
+                )
+            }
+            return
         }
 
         val sessionOpenedAt = repository.sessionPreferences.ensureSessionOpenedAt()
@@ -432,6 +487,10 @@ class NephoNotificationListener : NotificationListenerService() {
         REASON_CANCEL_ALL -> "cleared all"
         REASON_APP_CANCEL -> "cleared by app"
         REASON_APP_CANCEL_ALL -> "cleared all by app"
+        REASON_GROUP_SUMMARY_CANCELED -> "group swiped away"
+        REASON_SNOOZED -> "snoozed in shade"
+        REASON_PACKAGE_BANNED -> "app notifications turned off"
+        REASON_CHANNEL_BANNED -> "channel muted"
         else -> "reason $reason"
     }
 
@@ -447,12 +506,23 @@ class NephoNotificationListener : NotificationListenerService() {
         private val _lastConnectedAt = MutableStateFlow<Long?>(null)
         val lastConnectedAtFlow: StateFlow<Long?> = _lastConnectedAt.asStateFlow()
 
+        private val NEPHO_SHADE_DISMISS_REASONS = setOf(
+            REASON_CANCEL,
+            REASON_CANCEL_ALL,
+            REASON_GROUP_SUMMARY_CANCELED,
+            REASON_SNOOZED
+        )
+
         private val SYNCABLE_REMOVAL_REASONS = setOf(
             REASON_CLICK,
             REASON_CANCEL,
             REASON_CANCEL_ALL,
             REASON_APP_CANCEL,
-            REASON_APP_CANCEL_ALL
+            REASON_APP_CANCEL_ALL,
+            REASON_GROUP_SUMMARY_CANCELED,
+            REASON_SNOOZED,
+            REASON_PACKAGE_BANNED,
+            REASON_CHANNEL_BANNED
         )
 
         fun isListenerEnabled(context: Context): Boolean {
@@ -467,6 +537,34 @@ class NephoNotificationListener : NotificationListenerService() {
             }.onFailure { e ->
                 Log.w(TAG, "requestRebind failed", e)
             }.getOrDefault(false)
+        }
+
+        /**
+         * Two-stage recovery for a stalled ("yellow light") notification listener:
+         * cycles the listener service component registration via PackageManager and
+         * immediately requests Android's NotificationManagerService to rebind it.
+         */
+        fun resetAndRebindService(context: Context): Boolean {
+            val component = ComponentName(context, NephoNotificationListener::class.java)
+            val componentCycled = runCatching {
+                val pm = context.packageManager
+                pm.setComponentEnabledSetting(
+                    component,
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_DISABLED,
+                    android.content.pm.PackageManager.DONT_KILL_APP
+                )
+                pm.setComponentEnabledSetting(
+                    component,
+                    android.content.pm.PackageManager.COMPONENT_ENABLED_STATE_ENABLED,
+                    android.content.pm.PackageManager.DONT_KILL_APP
+                )
+                true
+            }.onFailure { e ->
+                Log.w(TAG, "Component toggle during listener reset failed", e)
+            }.getOrDefault(false)
+
+            val rebindRequested = requestRebindService(context)
+            return componentCycled || rebindRequested
         }
 
         fun cancelSystemNotification(key: String) {

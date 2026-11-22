@@ -27,7 +27,9 @@ import com.example.data.SessionMetrics
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
 import com.example.data.UndoDismissBatch
+import com.example.data.local.CalmVisualPrefs
 import com.example.data.local.CaptureDiagnosticEntity
+import com.example.data.local.HomeSectionId
 import com.example.data.local.HomeSectionPrefs
 import com.example.data.local.PulseDatabase
 import com.example.launcher.CalendarEventItem
@@ -119,9 +121,53 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         repository.sessionPreferences.homeSectionsFlow
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), HomeSectionPrefs())
 
+    val calmVisualPrefs: StateFlow<CalmVisualPrefs> =
+        repository.sessionPreferences.calmVisualPrefsFlow
+            .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), CalmVisualPrefs())
+
     fun setHomeSections(sections: HomeSectionPrefs) {
         viewModelScope.launch {
             repository.sessionPreferences.setHomeSections(sections)
+        }
+    }
+
+    fun moveHomeSection(sectionId: HomeSectionId, delta: Int) {
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.homeSectionsFlow.first()
+            repository.sessionPreferences.setHomeSections(current.moveSection(sectionId, delta))
+        }
+    }
+
+    fun toggleHomeSectionMinimized(sectionId: HomeSectionId) {
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.homeSectionsFlow.first()
+            repository.sessionPreferences.setHomeSections(current.toggleMinimized(sectionId))
+        }
+    }
+
+    fun setHomeSectionMinimized(sectionId: HomeSectionId, minimized: Boolean) {
+        viewModelScope.launch {
+            val current = repository.sessionPreferences.homeSectionsFlow.first()
+            if (current.isMinimized(sectionId) != minimized) {
+                repository.sessionPreferences.setHomeSections(current.withMinimized(sectionId, minimized))
+            }
+        }
+    }
+
+    fun resetHomeLayout() {
+        viewModelScope.launch {
+            repository.sessionPreferences.setHomeSections(HomeSectionPrefs())
+            _snackbarEvents.tryEmit(
+                SnackbarEvent(
+                    message = getApplication<Application>().getString(R.string.home_layout_reset_toast)
+                )
+            )
+        }
+    }
+
+    fun setCalmVisualPrefs(calmPrefs: CalmVisualPrefs) {
+        viewModelScope.launch {
+            repository.sessionPreferences.setCalmVisualPrefs(calmPrefs)
         }
     }
 
@@ -332,6 +378,9 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
 
     val allActiveNotifications: StateFlow<List<PulseNotificationItem>> =
         repository.activeNotificationsFlow
+            .map { items ->
+                items.filter { com.example.notifications.CommunicationMessageFilter.shouldDisplayInFeed(it) }
+            }
             .stateIn(viewModelScope, SharingStarted.WhileSubscribed(5_000), emptyList())
 
     val filteredNotifications: StateFlow<List<PulseNotificationItem>> = combine(
@@ -973,6 +1022,14 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 if (requested) R.string.diagnostics_rebind_sent else R.string.diagnostics_rebind_failed
             )
         )
+    }
+
+    fun resetAndRestartListener(): Boolean {
+        val ctx = getApplication<Application>()
+        val resetOk = NephoNotificationListener.resetAndRebindService(ctx)
+        refreshAccessAndPermissions()
+        refreshLauncherState()
+        return resetOk
     }
 
     fun openBatteryOptimizationSettings() {

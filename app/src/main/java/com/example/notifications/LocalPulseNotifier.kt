@@ -9,13 +9,16 @@ import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
 import android.os.Build
+import android.os.Bundle
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
 import androidx.core.app.RemoteInput
 import androidx.core.content.ContextCompat
 import com.example.MainActivity
 import com.example.R
+import com.example.data.CaptureOutcome
 import com.example.data.NativeReplyHandle
+import com.example.data.PulseJsonCodec
 import com.example.data.PulseRepository
 import com.example.data.pulseThreadId
 import com.example.widget.NephoUnreadWidgetProvider
@@ -28,6 +31,7 @@ object LocalPulseNotifier {
     const val REMINDER_CHANNEL_ID = "nepho_reminders"
     const val DIGEST_CHANNEL_ID = "nepho_digests"
     const val REMOTE_INPUT_KEY = "pulse_inline_reply"
+    const val EXTRA_NEPHO_KEY = "extra_nepho_feed_key"
 
     fun hasNotificationPermission(context: Context): Boolean {
         return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
@@ -147,7 +151,9 @@ object LocalPulseNotifier {
         body: String,
         canReply: Boolean,
         secondaryActions: List<String>,
-        registerLocalFallbackHandle: Boolean = true
+        registerLocalFallbackHandle: Boolean = true,
+        isStarred: Boolean = false,
+        onlyAlertOnce: Boolean = false
     ) {
         ensureChannel(context)
 
@@ -220,6 +226,18 @@ object LocalPulseNotifier {
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
         )
 
+        val swipeDismissIntent = Intent(context, PulseActionReceiver::class.java).apply {
+            action = PulseActionReceiver.ACTION_SWIPE_DISMISS
+            putExtra(PulseActionReceiver.EXTRA_KEY, key)
+            putExtra(PulseActionReceiver.EXTRA_NOTIFICATION_ID, notificationId)
+        }
+        val swipeDismissPendingIntent = PendingIntent.getBroadcast(
+            context,
+            notificationId * 10 + 6,
+            swipeDismissIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
         if (registerLocalFallbackHandle) {
             // Register real PendingIntent & RemoteInput handles in-memory keyed by notification key
             repository.registerNativeActionHandle(
@@ -241,7 +259,10 @@ object LocalPulseNotifier {
             .setContentText(body)
             .setStyle(NotificationCompat.BigTextStyle().bigText(body))
             .setContentIntent(openAppIntent)
+            .setDeleteIntent(swipeDismissPendingIntent)
+            .addExtras(Bundle().apply { putString(EXTRA_NEPHO_KEY, key) })
             .setAutoCancel(true)
+            .setOnlyAlertOnce(onlyAlertOnce)
             .setPriority(NotificationCompat.PRIORITY_DEFAULT)
 
         // Mirror the actions Nepho offers in-app: Reply, the source app's own actions,
@@ -271,7 +292,12 @@ object LocalPulseNotifier {
             actionSlots--
         }
         if (actionSlots > 0) {
-            builder.addAction(0, context.getString(R.string.action_star_message), starPendingIntent)
+            val starLabel = if (isStarred) {
+                context.getString(R.string.action_unstar_message)
+            } else {
+                context.getString(R.string.action_star_message)
+            }
+            builder.addAction(0, starLabel, starPendingIntent)
         }
 
         try {
@@ -286,41 +312,123 @@ class PulseActionReceiver : BroadcastReceiver() {
     override fun onReceive(context: Context, intent: Intent) {
         val key = intent.getStringExtra(EXTRA_KEY) ?: return
         val notificationId = intent.getIntExtra(EXTRA_NOTIFICATION_ID, -1)
+        val replyText = if (intent.action == ACTION_REPLY) {
+            RemoteInput.getResultsFromIntent(intent)
+                ?.getCharSequence(LocalPulseNotifier.REMOTE_INPUT_KEY)
+                ?.toString()
+        } else {
+            null
+        }
         val pendingResult = goAsync()
         val repository = PulseRepository.getInstance(context)
 
         CoroutineScope(Dispatchers.IO).launch {
             try {
-                when (intent.action) {
-                    ACTION_REPLY -> {
-                        val results = RemoteInput.getResultsFromIntent(intent)
-                        val replyText = results?.getCharSequence(LocalPulseNotifier.REMOTE_INPUT_KEY)?.toString()
-                        if (!replyText.isNullOrBlank()) {
-                            repository.sendInlineReply(key, replyText, fromShadeReceiver = true)
-                        }
-                        if (notificationId != -1) {
-                            NotificationManagerCompat.from(context).cancel(notificationId)
-                        }
-                    }
-                    ACTION_SECONDARY -> {
-                        val label = intent.getStringExtra(EXTRA_ACTION_LABEL) ?: "Mark Read"
-                        repository.executeSecondaryAction(key, label, fromShadeReceiver = true)
-                        if (notificationId != -1) {
-                            NotificationManagerCompat.from(context).cancel(notificationId)
-                        }
-                    }
-                    ACTION_DISMISS -> {
-                        repository.dismissNotification(key)
-                        if (notificationId != -1) {
-                            NotificationManagerCompat.from(context).cancel(notificationId)
-                        }
-                    }
-                    ACTION_STAR -> {
-                        repository.toggleNotificationStar(key)
-                    }
-                }
+                handleAction(
+                    context = context,
+                    repository = repository,
+                    action = intent.action,
+                    key = key,
+                    notificationId = notificationId,
+                    actionLabel = intent.getStringExtra(EXTRA_ACTION_LABEL),
+                    replyText = replyText
+                )
             } finally {
                 pendingResult.finish()
+            }
+        }
+    }
+
+    internal suspend fun handleAction(
+        context: Context,
+        repository: PulseRepository,
+        action: String?,
+        key: String,
+        notificationId: Int,
+        actionLabel: String? = null,
+        replyText: String? = null
+    ) {
+        val existing = repository.getNotificationByKey(key)
+        when (action) {
+            ACTION_REPLY -> {
+                if (!replyText.isNullOrBlank()) {
+                    repository.sendInlineReply(key, replyText, fromShadeReceiver = true)
+                    if (existing != null && !existing.isDismissed) {
+                        repository.recordCaptureDiagnostic(
+                            packageName = existing.packageName,
+                            appLabel = existing.appLabel,
+                            titlePreview = existing.title,
+                            outcome = CaptureOutcome.SYNCED_REMOVAL,
+                            detail = "Replied from shade and synced to Nepho Feed."
+                        )
+                    }
+                }
+                if (notificationId != -1) {
+                    NotificationManagerCompat.from(context).cancel(notificationId)
+                }
+            }
+            ACTION_SECONDARY -> {
+                val label = actionLabel ?: "Mark Read"
+                repository.executeSecondaryAction(key, label, fromShadeReceiver = true)
+                if (notificationId != -1) {
+                    NotificationManagerCompat.from(context).cancel(notificationId)
+                }
+                if (existing != null && !existing.isDismissed) {
+                    repository.recordCaptureDiagnostic(
+                        packageName = existing.packageName,
+                        appLabel = existing.appLabel,
+                        titlePreview = existing.title,
+                        outcome = CaptureOutcome.SYNCED_REMOVAL,
+                        detail = "Acted on from shade ($label) and synced to Nepho Feed."
+                    )
+                }
+            }
+            ACTION_DISMISS -> {
+                val synced = repository.syncDismissalFromSystem(key)
+                if (notificationId != -1) {
+                    NotificationManagerCompat.from(context).cancel(notificationId)
+                }
+                if (synced && existing != null) {
+                    repository.recordCaptureDiagnostic(
+                        packageName = existing.packageName,
+                        appLabel = existing.appLabel,
+                        titlePreview = existing.title,
+                        outcome = CaptureOutcome.SYNCED_REMOVAL,
+                        detail = "Dismissed in Nepho from shade action button."
+                    )
+                }
+            }
+            ACTION_SWIPE_DISMISS -> {
+                val synced = repository.syncDismissalFromSystem(key)
+                if (synced && existing != null) {
+                    repository.recordCaptureDiagnostic(
+                        packageName = existing.packageName,
+                        appLabel = existing.appLabel,
+                        titlePreview = existing.title,
+                        outcome = CaptureOutcome.SYNCED_REMOVAL,
+                        detail = "Dismissed in Nepho to match shade swipe/clear."
+                    )
+                }
+            }
+            ACTION_STAR -> {
+                val nextStarred = repository.toggleNotificationStar(key)
+                if (existing != null && !existing.isDismissed && notificationId != -1) {
+                    LocalPulseNotifier.postInteractiveLocalNotification(
+                        context = context,
+                        repository = repository,
+                        key = key,
+                        notificationId = notificationId,
+                        packageName = existing.packageName,
+                        appLabel = existing.appLabel,
+                        title = existing.title,
+                        body = existing.body,
+                        canReply = existing.canReply,
+                        secondaryActions = PulseJsonCodec.decodeStringList(existing.secondaryActionsJson),
+                        registerLocalFallbackHandle = false,
+                        isStarred = nextStarred,
+                        onlyAlertOnce = true
+                    )
+                }
             }
         }
     }
@@ -329,6 +437,7 @@ class PulseActionReceiver : BroadcastReceiver() {
         const val ACTION_REPLY = "com.example.ACTION_PULSE_REPLY"
         const val ACTION_SECONDARY = "com.example.ACTION_PULSE_SECONDARY"
         const val ACTION_DISMISS = "com.example.ACTION_PULSE_DISMISS"
+        const val ACTION_SWIPE_DISMISS = "com.example.ACTION_PULSE_SWIPE_DISMISS"
         const val ACTION_STAR = "com.example.ACTION_PULSE_STAR"
         const val EXTRA_KEY = "extra_pulse_key"
         const val EXTRA_NOTIFICATION_ID = "extra_pulse_notification_id"

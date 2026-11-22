@@ -14,6 +14,8 @@ import androidx.compose.ui.test.performTextInput
 import com.example.data.CachedGifAttachment
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
+import com.example.data.local.CalmVisualPrefs
+import com.example.data.local.HomeSectionId
 import com.example.data.local.HomeSectionPrefs
 import com.example.launcher.CalendarDayGroup
 import com.example.launcher.CalendarEventItem
@@ -36,23 +38,42 @@ import androidx.compose.ui.test.performTouchInput
 import androidx.compose.ui.test.swipeLeft
 import androidx.compose.ui.test.swipeRight
 import androidx.compose.ui.test.swipeUp
+import androidx.compose.ui.unit.dp
 import androidx.compose.foundation.lazy.LazyColumn
 import com.example.launcher.LauncherAppCatalog
+import com.example.ui.AlphabeticalAppDrawerSheet
+import com.example.ui.CaptureDiagnosticsDialog
 import com.example.ui.HomeCalendarCard
 import com.example.ui.HomeClockCard
 import com.example.ui.HomeMusicCard
 import com.example.ui.HomeSectionsDialog
+import com.example.ui.InboxModeSwitcher
+import com.example.ui.KeyboardInputBoundsRegistry
 import com.example.ui.LinksVaultTab
 import com.example.ui.ListenerHealthState
+import com.example.ui.LocalKeyboardInputBoundsRegistry
+import com.example.ui.MinimizedAppDrawerBar
+import com.example.ui.MinimizedCalendarBar
+import com.example.ui.MinimizedClockBar
+import com.example.ui.MinimizedInboxBar
+import com.example.ui.MinimizedMusicBar
 import com.example.ui.MusicServicePickerDialog
 import com.example.ui.NephoHeaderTitle
+import com.example.ui.PulseTab
 import com.example.ui.QuickAlarmDialog
+import com.example.ui.RestartNephoMenuItem
+import com.example.ui.SoothingQuotesCard
+import com.example.ui.SoothingQuotesCatalog
 import com.example.ui.appDrawerSectionItems
+import com.example.ui.areAllVisibleSectionsMinimized
+import com.example.ui.dismissKeyboardOnOutsideInteraction
 import com.example.ui.homeScreenGestures
+import com.example.ui.keepKeyboardOpenArea
 import com.example.ui.ThreadPopupDialog
 import com.example.ui.WeatherSetupDialog
 import com.example.ui.theme.NephoTheme
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -376,7 +397,7 @@ class ChromeOsUiTest {
             assertEquals(false, latest?.showCalendar)
         }
 
-        composeRule.onNodeWithTag("home_section_toggle_dock").performClick()
+        composeRule.onNodeWithTag("home_section_toggle_dock").performScrollTo().performClick()
         composeRule.runOnIdle {
             assertEquals(false, latest?.showShortcutDock)
         }
@@ -782,7 +803,609 @@ class ChromeOsUiTest {
             assertTrue(searchFocusedCount >= 1)
         }
     }
+
+    @Test
+    fun `HomeSectionPrefs reorders normalizes and toggles minimized sections`() {
+        val initial = HomeSectionPrefs()
+        assertEquals(HomeSectionId.DEFAULT_ORDER, initial.normalizedOrder)
+
+        val movedMusicUp = initial.moveSection(HomeSectionId.MUSIC, -1)
+        assertEquals(HomeSectionId.MUSIC, movedMusicUp.normalizedOrder[0])
+        assertEquals(HomeSectionId.CLOCK, movedMusicUp.normalizedOrder[1])
+
+        // Moving top item further up is a no-op
+        assertEquals(movedMusicUp.normalizedOrder, movedMusicUp.moveSection(HomeSectionId.MUSIC, -1).normalizedOrder)
+
+        // Toggle minimize on Calendar
+        val minimized = movedMusicUp.toggleMinimized(HomeSectionId.CALENDAR)
+        assertTrue(minimized.isMinimized(HomeSectionId.CALENDAR))
+        assertFalse(minimized.toggleMinimized(HomeSectionId.CALENDAR).isMinimized(HomeSectionId.CALENDAR))
+
+        // Partial/duplicated order gets normalized with all default sections
+        val normalized = HomeSectionId.normalizeOrder(listOf(HomeSectionId.INBOX, HomeSectionId.INBOX))
+        assertEquals(HomeSectionId.DEFAULT_ORDER.size, normalized.size)
+        assertEquals(HomeSectionId.INBOX, normalized.first())
+    }
+
+    @Test
+    fun `HomeSectionsDialog updates Calm appearance toggles reorders minimizes and resets`() {
+        val sectionsState = mutableStateOf(HomeSectionPrefs())
+        val calmState = mutableStateOf(CalmVisualPrefs())
+        var resetClicked = false
+
+        composeRule.setContent {
+            NephoTheme(calmPrefs = calmState.value) {
+                HomeSectionsDialog(
+                    sections = sectionsState.value,
+                    onSetSections = { sectionsState.value = it },
+                    onDismiss = {},
+                    calmPrefs = calmState.value,
+                    onSetCalmPrefs = { calmState.value = it },
+                    onResetLayout = {
+                        resetClicked = true
+                        sectionsState.value = HomeSectionPrefs()
+                    }
+                )
+            }
+        }
+
+        // Default Calm preferences are all enabled; toggle monochrome & hide counts off
+        composeRule.onNodeWithTag("calm_toggle_monochrome").performScrollTo().performClick()
+        composeRule.onNodeWithTag("calm_toggle_hide_counts").performScrollTo().performClick()
+        // Move Music above Clock and minimize Calendar
+        composeRule.onNodeWithTag("home_section_move_up_music").performScrollTo().performClick()
+        composeRule.onNodeWithTag("home_section_minimize_calendar").performScrollTo().performClick()
+
+        composeRule.runOnIdle {
+            assertFalse(calmState.value.monochromeIcons)
+            assertFalse(calmState.value.hideUnreadCounts)
+            assertTrue(calmState.value.calmPaletteEnabled)
+            assertEquals(HomeSectionId.MUSIC, sectionsState.value.normalizedOrder.first())
+            assertTrue(sectionsState.value.isMinimized(HomeSectionId.CALENDAR))
+        }
+
+        composeRule.onNodeWithTag("home_layout_reset_button").performClick()
+        composeRule.runOnIdle {
+            assertTrue(resetClicked)
+            assertEquals(HomeSectionId.DEFAULT_ORDER, sectionsState.value.normalizedOrder)
+            assertFalse(sectionsState.value.isMinimized(HomeSectionId.CALENDAR))
+        }
+    }
+
+    @Test
+    fun `minimized home bars expand on click and respect quiet inbox dot`() {
+        var expandedClock = false
+        var expandedMusic = false
+        var toggledPlay = false
+        var expandedCalendar = false
+        var expandedInbox = false
+        var expandedApps = false
+        var quickSearchedApps = false
+
+        composeRule.setContent {
+            NephoTheme(calmPrefs = CalmVisualPrefs(hideUnreadCounts = true)) {
+                androidx.compose.foundation.layout.Column {
+                    MinimizedClockBar(
+                        weatherState = WeatherUiState(),
+                        onExpand = { expandedClock = true }
+                    )
+                    MinimizedMusicBar(
+                        mediaState = MediaPlaybackState(
+                            isActive = true,
+                            isPlaying = true,
+                            title = "Ambient Rain",
+                            artist = "Calm Radio"
+                        ),
+                        onTogglePlayPause = { toggledPlay = true },
+                        onExpand = { expandedMusic = true }
+                    )
+                    MinimizedCalendarBar(
+                        scheduleState = CalendarScheduleState(hasPermission = true),
+                        onExpand = { expandedCalendar = true }
+                    )
+                    MinimizedInboxBar(
+                        unreadCount = 4,
+                        linksCount = 2,
+                        onExpand = { expandedInbox = true }
+                    )
+                    MinimizedAppDrawerBar(
+                        totalInstalledCount = 24,
+                        onExpand = { expandedApps = true },
+                        onQuickSearch = { quickSearchedApps = true }
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("minimized_inbox_quiet_dot", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("minimized_section_clock").performClick()
+        composeRule.onNodeWithTag("minimized_music_play_pause").performClick()
+        composeRule.onNodeWithTag("minimized_section_music").performClick()
+        composeRule.onNodeWithTag("minimized_section_calendar").performClick()
+        composeRule.onNodeWithTag("minimized_section_inbox").performClick()
+        composeRule.onNodeWithTag("minimized_apps_search_button").performClick()
+        composeRule.onNodeWithTag("minimized_section_apps").performClick()
+
+        composeRule.runOnIdle {
+            assertTrue(expandedClock)
+            assertTrue(toggledPlay)
+            assertTrue(expandedMusic)
+            assertTrue(expandedCalendar)
+            assertTrue(expandedInbox)
+            assertTrue(quickSearchedApps)
+            assertTrue(expandedApps)
+        }
+    }
+
+    @Test
+    fun `FeedTab collapses filters with quiet toggle and declutters cards in Calm Mode`() {
+        val calmMode = mutableStateOf(CalmVisualPrefs(calmPaletteEnabled = true, hideUnreadCounts = true))
+        val sampleItem = PulseNotificationItem(
+            key = "msg_calm_1",
+            notificationId = 42,
+            packageName = SupportedApp.GMAIL.packageName,
+            appLabel = "Gmail",
+            title = "Quiet Digest",
+            body = "Everything is calm today.",
+            postTime = 1_763_571_600_000L,
+            isRead = false,
+            isDismissed = false,
+            canReply = false,
+            secondaryActions = emptyList(),
+            replies = emptyList(),
+            urls = emptyList(),
+            sourceChannel = "TEST",
+            isStarred = false
+        )
+
+        composeRule.setContent {
+            NephoTheme(calmPrefs = calmMode.value) {
+                FeedTab(
+                    notifications = listOf(sampleItem),
+                    selectedAppFilter = null,
+                    unreadOnly = false,
+                    hasLinksOnly = false,
+                    starredOnly = false,
+                    bannerDismissed = true,
+                    hasNotificationPermission = true,
+                    isNotificationAccessGranted = true,
+                    onSelectAppFilter = {},
+                    onToggleUnreadOnly = {},
+                    onToggleHasLinksOnly = {},
+                    onToggleStarredOnly = {},
+                    onRequestNotificationPermission = {},
+                    onOpenNotificationAccessSettings = {},
+                    onOpenShadePreferences = {},
+                    onDismissBanner = {},
+                    onOpenThread = {},
+                    onOpenApp = {},
+                    onOpenSelectedApp = {},
+                    onToggleStar = {},
+                    onSwipeToggleStar = {},
+                    onSwipeDismissItem = {},
+                    onSwipeStarBlocked = {},
+                    onMarkGroupRead = { _, _ -> },
+                    onClearGroup = { _, _ -> },
+                    onOpenReminderDialog = {},
+                    onDismissItem = {},
+                    onOpenVaultTab = {},
+                    initialFiltersExpanded = false
+                )
+            }
+        }
+
+        // Filters start collapsed behind quiet toggle pill
+        composeRule.onNodeWithTag("feed_filter_toggle_button").assertIsDisplayed()
+        composeRule.onNodeWithTag("filter_chip_gmail").assertDoesNotExist()
+        // In Calm Mode, inline card action buttons are omitted and group shows quiet status
+        composeRule.onNodeWithTag("star_button_msg_calm_1").assertDoesNotExist()
+        composeRule.onNodeWithTag("group_quiet_status_${sampleItem.packageName}", useUnmergedTree = true)
+            .assertIsDisplayed()
+
+        // Tapping Filter expands the chip rows
+        composeRule.onNodeWithTag("feed_filter_toggle_button").performClick()
+        composeRule.onNodeWithTag("filter_chip_gmail").assertIsDisplayed()
+
+        // Switching to Vivid Mode restores inline card action buttons
+        composeRule.runOnIdle {
+            calmMode.value = CalmVisualPrefs(calmPaletteEnabled = false, hideUnreadCounts = false)
+        }
+        composeRule.onNodeWithTag("star_button_msg_calm_1").assertIsDisplayed()
+    }
+
+    @Test
+    fun `dismissKeyboardOnOutsideInteraction dismisses keyboard on any outside tap or scroll without blocking controls`() {
+        val registry = KeyboardInputBoundsRegistry()
+        val query = mutableStateOf("")
+        var dismissCount = 0
+        var otherButtonClicks = 0
+
+        composeRule.setContent {
+            NephoTheme {
+                androidx.compose.runtime.CompositionLocalProvider(
+                    LocalKeyboardInputBoundsRegistry provides registry
+                ) {
+                    androidx.compose.foundation.layout.Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .dismissKeyboardOnOutsideInteraction(
+                                registry = registry,
+                                shouldDismiss = { true },
+                                onDismissKeyboard = { dismissCount++ }
+                            )
+                            .testTag("keyboard_dismiss_root")
+                    ) {
+                        androidx.compose.material3.OutlinedTextField(
+                            value = query.value,
+                            onValueChange = { query.value = it },
+                            modifier = Modifier
+                                .keepKeyboardOpenArea("test_search")
+                                .testTag("test_search_field")
+                        )
+                        Button(
+                            onClick = { otherButtonClicks++ },
+                            modifier = Modifier.testTag("other_home_control")
+                        ) {
+                            Text("Clock")
+                        }
+                    }
+                }
+            }
+        }
+
+        // Tapping and typing inside the search input should NOT dismiss the keyboard
+        composeRule.onNodeWithTag("test_search_field").performClick().performTextInput("Maps")
+        composeRule.runOnIdle {
+            assertEquals("Maps", query.value)
+            assertEquals(0, dismissCount)
+        }
+
+        // Tapping another control on the home screen dismisses the keyboard AND triggers the control
+        composeRule.onNodeWithTag("other_home_control").performClick()
+        composeRule.runOnIdle {
+            assertEquals(1, otherButtonClicks)
+            assertEquals(1, dismissCount)
+        }
+
+        // Swiping/scrolling elsewhere on the home screen also dismisses the keyboard
+        composeRule.onNodeWithTag("keyboard_dismiss_root").performTouchInput { swipeUp() }
+        composeRule.runOnIdle {
+            assertEquals(2, dismissCount)
+        }
+    }
+
+    @Test
+    fun `InboxModeSwitcher shows calming blue glowing heading when inbox has items and stays quiet when empty`() {
+        val totalCount = mutableStateOf(0)
+        val unreadCount = mutableStateOf(0)
+
+        composeRule.setContent {
+            NephoTheme {
+                InboxModeSwitcher(
+                    selectedTab = PulseTab.FEED,
+                    unreadCount = unreadCount.value,
+                    linksCount = 0,
+                    onSelectTab = {},
+                    onMinimize = {},
+                    totalInboxCount = totalCount.value
+                )
+            }
+        }
+
+        // Empty inbox: heading is displayed without active glow indicator
+        composeRule.onNodeWithTag("inbox_section_heading", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("Inbox")
+        composeRule.onNodeWithTag("inbox_heading_glow_indicator", useUnmergedTree = true)
+            .assertDoesNotExist()
+
+        // Any item in inbox (even if already read): activates larger bold calming blue glowing heading
+        composeRule.runOnIdle {
+            totalCount.value = 1
+        }
+        composeRule.onNodeWithTag("inbox_section_heading", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("Inbox")
+        composeRule.onNodeWithTag("inbox_heading_glow_indicator", useUnmergedTree = true)
+            .assertIsDisplayed()
+    }
+
+    @Test
+    fun `MinimizedInboxBar stops showing New activity once all messages are reviewed`() {
+        val totalCount = mutableStateOf(2)
+        val unreadCount = mutableStateOf(2)
+
+        composeRule.setContent {
+            NephoTheme(calmPrefs = CalmVisualPrefs(hideUnreadCounts = true)) {
+                MinimizedInboxBar(
+                    unreadCount = unreadCount.value,
+                    linksCount = 0,
+                    onExpand = {},
+                    totalInboxCount = totalCount.value
+                )
+            }
+        }
+
+        // Unread messages present: shows quiet dot and "New activity"
+        composeRule.onNodeWithTag("minimized_inbox_quiet_dot", useUnmergedTree = true)
+            .assertIsDisplayed()
+        composeRule.onNodeWithTag("minimized_inbox_status", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("New activity")
+
+        // All messages reviewed (unread == 0, total > 0): no dot and no "New activity"
+        composeRule.runOnIdle {
+            unreadCount.value = 0
+        }
+        composeRule.onNodeWithTag("minimized_inbox_quiet_dot", useUnmergedTree = true)
+            .assertDoesNotExist()
+        composeRule.onNodeWithTag("minimized_inbox_status", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("Reviewed")
+
+        // All messages cleared (unread == 0, total == 0): shows "All caught up"
+        composeRule.runOnIdle {
+            totalCount.value = 0
+        }
+        composeRule.onNodeWithTag("minimized_inbox_status", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("All caught up")
+    }
+
+    @Test
+    fun `SoothingQuotesCard displays famous quotes and cycles to a different quote when tapped`() {
+        val firstQuote = SoothingQuotesCatalog.quotes[0]
+        val secondQuote = SoothingQuotesCatalog.quotes[1]
+
+        composeRule.setContent {
+            NephoTheme {
+                SoothingQuotesCard(initialQuoteIndex = 0)
+            }
+        }
+
+        composeRule.onNodeWithTag("soothing_quotes_card").assertIsDisplayed()
+        composeRule.onNodeWithTag("soothing_quote_text", useUnmergedTree = true)
+            .assertTextContains(firstQuote.text, substring = true)
+        composeRule.onNodeWithTag("soothing_quote_attribution", useUnmergedTree = true)
+            .assertTextContains(firstQuote.attribution, substring = true)
+
+        composeRule.onNodeWithTag("soothing_quote_next_button").performClick()
+
+        composeRule.onNodeWithTag("soothing_quote_text", useUnmergedTree = true)
+            .assertTextContains(secondQuote.text, substring = true)
+        composeRule.onNodeWithTag("soothing_quote_attribution", useUnmergedTree = true)
+            .assertTextContains(secondQuote.attribution, substring = true)
+    }
+
+    @Test
+    fun `areAllVisibleSectionsMinimized detects when every visible home drawer is closed`() {
+        val defaultPrefs = HomeSectionPrefs()
+        assertFalse(areAllVisibleSectionsMinimized(defaultPrefs))
+
+        val allClosed = HomeSectionPrefs(
+            minimizedSections = HomeSectionId.entries.toSet()
+        )
+        assertTrue(areAllVisibleSectionsMinimized(allClosed))
+
+        val hiddenSomeRestClosed = HomeSectionPrefs(
+            showMusic = false,
+            showCalendar = false,
+            minimizedSections = setOf(HomeSectionId.CLOCK, HomeSectionId.INBOX, HomeSectionId.APPS)
+        )
+        assertTrue(areAllVisibleSectionsMinimized(hiddenSomeRestClosed))
+    }
+
+    @Test
+    fun `FeedTab shows SoothingQuotesCard when inbox is empty and hides it when messages arrive`() {
+        val notifications = mutableStateOf<List<PulseNotificationItem>>(emptyList())
+
+        composeRule.setContent {
+            NephoTheme {
+                FeedTab(
+                    notifications = notifications.value,
+                    selectedAppFilter = null,
+                    unreadOnly = false,
+                    hasLinksOnly = false,
+                    starredOnly = false,
+                    bannerDismissed = true,
+                    hasNotificationPermission = true,
+                    isNotificationAccessGranted = true,
+                    onSelectAppFilter = {},
+                    onToggleUnreadOnly = {},
+                    onToggleHasLinksOnly = {},
+                    onToggleStarredOnly = {},
+                    onRequestNotificationPermission = {},
+                    onOpenNotificationAccessSettings = {},
+                    onOpenShadePreferences = {},
+                    onDismissBanner = {},
+                    onOpenThread = {},
+                    onOpenApp = {},
+                    onOpenSelectedApp = {},
+                    onToggleStar = {},
+                    onSwipeToggleStar = {},
+                    onSwipeDismissItem = {},
+                    onSwipeStarBlocked = {},
+                    onMarkGroupRead = { _, _ -> },
+                    onClearGroup = { _, _ -> },
+                    onOpenReminderDialog = {},
+                    onDismissItem = {},
+                    onOpenVaultTab = {}
+                )
+            }
+        }
+
+        composeRule.onNodeWithTag("soothing_quotes_card").performScrollTo().assertIsDisplayed()
+
+        composeRule.runOnIdle {
+            notifications.value = listOf(
+                PulseNotificationItem(
+                    key = "inbox_msg_1",
+                    notificationId = 10,
+                    packageName = SupportedApp.MESSAGES.packageName,
+                    appLabel = "Messages",
+                    title = "Sam",
+                    body = "See you soon!",
+                    postTime = 1_763_571_600_000L,
+                    isRead = false,
+                    isDismissed = false,
+                    canReply = true,
+                    secondaryActions = emptyList(),
+                    replies = emptyList(),
+                    urls = emptyList(),
+                    sourceChannel = "TEST"
+                )
+            )
+        }
+
+        composeRule.onNodeWithTag("soothing_quotes_card").assertDoesNotExist()
+        composeRule.onNodeWithTag("notification_card_inbox_msg_1").performScrollTo().assertIsDisplayed()
+    }
+
+    @Test
+    fun `RestartNephoMenuItem and CaptureDiagnosticsDialog expose yellow-light reset and restart action`() {
+        val isYellow = mutableStateOf(true)
+        var settingsRestarts = 0
+        var diagnosticsRestarts = 0
+
+        composeRule.setContent {
+            NephoTheme {
+                androidx.compose.foundation.layout.Column {
+                    RestartNephoMenuItem(
+                        isYellowStatus = isYellow.value,
+                        onClick = { settingsRestarts++ }
+                    )
+                    CaptureDiagnosticsDialog(
+                        health = ListenerHealthState(
+                            isAccessGranted = true,
+                            isListenerConnected = !isYellow.value,
+                            lastConnectedAt = null,
+                            hasPostNotificationPermission = true,
+                            isIgnoringBatteryOptimizations = true
+                        ),
+                        diagnostics = emptyList(),
+                        onRequestRebind = {},
+                        onOpenNotificationAccessSettings = {},
+                        onRequestNotificationPermission = {},
+                        onOpenBatterySettings = {},
+                        onClearLog = {},
+                        onDismiss = {},
+                        onRestartNepho = { diagnosticsRestarts++ }
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("menu_restart_yellow_indicator", useUnmergedTree = true).assertIsDisplayed()
+        composeRule.onNodeWithTag("menu_restart_nepho").performClick()
+        composeRule.onNodeWithTag("diagnostics_restart_nepho_button").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals(1, settingsRestarts)
+            assertEquals(1, diagnosticsRestarts)
+            isYellow.value = false
+        }
+
+        composeRule.onNodeWithTag("menu_restart_yellow_indicator", useUnmergedTree = true).assertDoesNotExist()
+    }
+
+    @Test
+    fun `homeScreenGestures opens alphabetical app drawer on bottom-edge swipe up even when scrollable`() {
+        var bottomSwipeCount = 0
+        var nonScrollableSwipeCount = 0
+
+        composeRule.setContent {
+            NephoTheme {
+                Box(
+                    modifier = Modifier
+                        .fillMaxSize()
+                        .homeScreenGestures(
+                            onDoubleTapScreenOff = {},
+                            onSwipeLeftGoogleSearch = {},
+                            canScrollForward = true,
+                            onSwipeUpWhenCannotScroll = { nonScrollableSwipeCount++ },
+                            onSwipeUpFromBottom = { bottomSwipeCount++ },
+                            bottomSwipeUpZoneHeight = 96.dp
+                        )
+                        .testTag("bottom_edge_gesture_root")
+                )
+            }
+        }
+
+        // Swiping up from the middle when scrollable should NOT trigger bottom-edge swipe
+        composeRule.onNodeWithTag("bottom_edge_gesture_root").performTouchInput {
+            swipeUp(startY = centerY, endY = top + 40f)
+        }
+        composeRule.runOnIdle {
+            assertEquals(0, bottomSwipeCount)
+            assertEquals(0, nonScrollableSwipeCount)
+        }
+
+        // Swiping up from near the bottom edge opens the alphabetical app drawer even when scrollable
+        composeRule.onNodeWithTag("bottom_edge_gesture_root").performTouchInput {
+            swipeUp(startY = bottom - 16f, endY = centerY)
+        }
+        composeRule.runOnIdle {
+            assertEquals(1, bottomSwipeCount)
+            assertEquals(0, nonScrollableSwipeCount)
+        }
+    }
+
+    @Test
+    fun `BottomShortcutDock swipe up over pinned icon opens drawer without launching icon and AlphabeticalAppDrawerSheet filters apps`() {
+        val apps = listOf(
+            LauncherAppInfo("com.android.chrome", "Main", "Chrome", "C"),
+            LauncherAppInfo("com.google.android.calendar", "Main", "Calendar", "C"),
+            LauncherAppInfo("com.spotify.music", "Main", "Spotify", "S")
+        )
+        var launchedApp: LauncherAppInfo? = null
+        val drawerOpen = mutableStateOf(false)
+
+        composeRule.setContent {
+            NephoTheme {
+                Box(modifier = Modifier.fillMaxSize()) {
+                    BottomShortcutDock(
+                        pinnedApps = apps,
+                        onLaunchApp = { launchedApp = it },
+                        onExpandDrawer = {},
+                        onSwipeUp = { drawerOpen.value = true },
+                        modifier = Modifier.align(androidx.compose.ui.Alignment.BottomCenter)
+                    )
+                    if (drawerOpen.value) {
+                        AlphabeticalAppDrawerSheet(
+                            installedApps = apps,
+                            pinnedPackages = setOf("com.android.chrome"),
+                            onLaunchApp = { launchedApp = it },
+                            onTogglePin = {},
+                            onDismiss = { drawerOpen.value = false }
+                        )
+                    }
+                }
+            }
+        }
+
+        // Swiping up starting directly on a pinned dock shortcut opens the drawer without launching the app
+        composeRule.onNodeWithTag("dock_shortcut_com.android.chrome").performTouchInput {
+            swipeUp(startY = centerY, endY = centerY - 220f)
+        }
+        composeRule.runOnIdle {
+            assertTrue(drawerOpen.value)
+            assertEquals(null, launchedApp)
+        }
+
+        composeRule.onNodeWithTag("alphabetical_app_drawer_sheet").assertIsDisplayed()
+        composeRule.onNodeWithTag("alphabetical_drawer_search_input").performTextInput("Spot")
+        composeRule.onNodeWithTag("alphabetical_drawer_app_com.spotify.music").performClick()
+
+        composeRule.runOnIdle {
+            assertEquals("com.spotify.music", launchedApp?.packageName)
+            assertFalse(drawerOpen.value)
+        }
+    }
 }
+
+
+
+
 
 
 

@@ -4,7 +4,6 @@ import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
-import androidx.compose.foundation.gestures.detectVerticalDragGestures
 import androidx.compose.foundation.horizontalScroll
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -76,12 +75,13 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.ImageBitmap
-import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
@@ -94,15 +94,9 @@ import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.launcher.LauncherAppCatalog
 import com.example.launcher.LauncherAppInfo
-import com.example.ui.theme.BorderHairline
-import com.example.ui.theme.CrimsonError
-import com.example.ui.theme.CyanPulse
-import com.example.ui.theme.CyanPulseContainer
-import com.example.ui.theme.ElevatedSurface
-import com.example.ui.theme.HighSurface
-import com.example.ui.theme.IndigoGlow
-import com.example.ui.theme.MidnightSurface
-import com.example.ui.theme.ObsidianBackground
+import com.example.ui.theme.LocalCalmVisualPrefs
+import com.example.ui.theme.LocalNephoPalette
+import com.example.ui.theme.MonochromeIconColorFilter
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 
@@ -123,6 +117,8 @@ fun AppIconBadge(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val calmPrefs = LocalCalmVisualPrefs.current
+    val palette = LocalNephoPalette.current
     val bitmap by produceState<ImageBitmap?>(initialValue = null, packageName) {
         value = withContext(Dispatchers.IO) {
             LauncherAppCatalog.loadAppIconBitmap(context, packageName)
@@ -133,7 +129,7 @@ fun AppIconBadge(
         modifier = modifier
             .size(size)
             .clip(RoundedCornerShape(11.dp))
-            .background(HighSurface),
+            .background(palette.highSurface),
         contentAlignment = Alignment.Center
     ) {
         val loaded = bitmap
@@ -142,13 +138,16 @@ fun AppIconBadge(
                 bitmap = loaded,
                 contentDescription = null,
                 contentScale = ContentScale.Crop,
-                modifier = Modifier.size(size)
+                colorFilter = if (calmPrefs.monochromeIcons) MonochromeIconColorFilter else null,
+                modifier = Modifier
+                    .size(size)
+                    .alpha(if (calmPrefs.monochromeIcons) 0.86f else 1f)
             )
         } else {
             Text(
                 text = label.trim().take(2).uppercase(),
                 style = MaterialTheme.typography.labelMedium.copy(fontWeight = FontWeight.Bold),
-                color = CyanPulse,
+                color = palette.accent,
                 maxLines = 1
             )
         }
@@ -164,9 +163,12 @@ fun LazyListScope.appDrawerSectionItems(
     onJumpToLetter: (String) -> Unit,
     onLaunchApp: (LauncherAppInfo) -> Unit,
     onTogglePin: (LauncherAppInfo) -> Unit,
-    onSearchFocusChanged: (Boolean) -> Unit = {}
+    onSearchFocusChanged: (Boolean) -> Unit = {},
+    onMinimize: (() -> Unit)? = null
 ) {
     item(key = "app_drawer_header") {
+        val palette = LocalNephoPalette.current
+        val calmPrefs = LocalCalmVisualPrefs.current
         Column(
             modifier = Modifier
                 .fillMaxWidth()
@@ -185,7 +187,7 @@ fun LazyListScope.appDrawerSectionItems(
                     Icon(
                         imageVector = Icons.Filled.Apps,
                         contentDescription = null,
-                        tint = CyanPulse,
+                        tint = palette.accent,
                         modifier = Modifier.size(20.dp)
                     )
                     Text(
@@ -194,26 +196,51 @@ fun LazyListScope.appDrawerSectionItems(
                         color = MaterialTheme.colorScheme.onBackground
                     )
                 }
-                Surface(
-                    shape = RoundedCornerShape(8.dp),
-                    color = HighSurface,
-                    border = BorderStroke(1.dp, BorderHairline)
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(4.dp)
                 ) {
-                    Text(
-                        text = stringResource(R.string.drawer_app_count, totalInstalledCount),
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                    )
+                    if (!calmPrefs.hideUnreadCounts) {
+                        val countShape = RoundedCornerShape(8.dp)
+                        Surface(
+                            shape = countShape,
+                            color = palette.highSurface,
+                            modifier = Modifier
+                                .clip(countShape)
+                                .calmingLitBorder(
+                                    accentColor = palette.accent,
+                                    cornerRadius = 8.dp,
+                                    strokeWidth = 1.dp,
+                                    intensity = CalmBorderIntensity.SUBTLE
+                                )
+                        ) {
+                            Text(
+                                text = stringResource(R.string.drawer_app_count, totalInstalledCount),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+                    }
+                    if (onMinimize != null) {
+                        SectionCollapseIconButton(
+                            minimized = false,
+                            sectionName = stringResource(R.string.drawer_section_title),
+                            onToggle = onMinimize,
+                            testTag = "minimize_section_apps"
+                        )
+                    }
                 }
             }
 
             val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
             OutlinedTextField(
                 value = searchQuery,
                 onValueChange = onSearchQueryChange,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .keepKeyboardOpenArea("app_drawer_search")
                     .onFocusChanged { focusState ->
                         onSearchFocusChanged(focusState.isFocused)
                     }
@@ -249,15 +276,16 @@ fun LazyListScope.appDrawerSectionItems(
                 keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
                 keyboardActions = KeyboardActions(
                     onSearch = {
+                        focusManager.clearFocus(force = true)
                         keyboardController?.hide()
                     }
                 ),
                 shape = RoundedCornerShape(14.dp),
                 colors = OutlinedTextFieldDefaults.colors(
-                    focusedContainerColor = MidnightSurface,
-                    unfocusedContainerColor = MidnightSurface,
-                    focusedBorderColor = CyanPulse,
-                    unfocusedBorderColor = BorderHairline
+                    focusedContainerColor = palette.surface,
+                    unfocusedContainerColor = palette.surface,
+                    focusedBorderColor = palette.accent,
+                    unfocusedBorderColor = palette.border
                 )
             )
 
@@ -270,12 +298,18 @@ fun LazyListScope.appDrawerSectionItems(
                     horizontalArrangement = Arrangement.spacedBy(6.dp)
                 ) {
                     letters.forEach { letter ->
+                        val letterShape = RoundedCornerShape(10.dp)
                         Surface(
-                            shape = RoundedCornerShape(10.dp),
-                            color = MidnightSurface,
-                            border = BorderStroke(1.dp, BorderHairline),
+                            shape = letterShape,
+                            color = palette.surface,
                             modifier = Modifier
-                                .clip(RoundedCornerShape(10.dp))
+                                .clip(letterShape)
+                                .calmingLitBorder(
+                                    accentColor = palette.accent,
+                                    cornerRadius = 10.dp,
+                                    strokeWidth = 1.dp,
+                                    intensity = CalmBorderIntensity.SUBTLE
+                                )
                                 .clickable { onJumpToLetter(letter) }
                                 .testTag("drawer_letter_$letter")
                         ) {
@@ -289,7 +323,7 @@ fun LazyListScope.appDrawerSectionItems(
                                     style = MaterialTheme.typography.labelMedium.copy(
                                         fontWeight = FontWeight.Bold
                                     ),
-                                    color = CyanPulse
+                                    color = palette.accent
                                 )
                             }
                         }
@@ -301,13 +335,21 @@ fun LazyListScope.appDrawerSectionItems(
 
     if (groupedApps.isEmpty()) {
         item(key = "app_drawer_empty") {
+            val palette = LocalNephoPalette.current
+            val emptyShape = RoundedCornerShape(16.dp)
             Card(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .clip(emptyShape)
+                    .calmingLitBorder(
+                        accentColor = palette.accent,
+                        cornerRadius = 16.dp,
+                        strokeWidth = 1.1.dp,
+                        intensity = CalmBorderIntensity.AMBIENT
+                    )
                     .testTag("app_drawer_empty_card"),
-                shape = RoundedCornerShape(16.dp),
-                border = BorderStroke(1.dp, BorderHairline),
-                colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+                shape = emptyShape,
+                colors = CardDefaults.cardColors(containerColor = palette.surface)
             ) {
                 Text(
                     text = if (searchQuery.isNotBlank()) {
@@ -324,6 +366,7 @@ fun LazyListScope.appDrawerSectionItems(
     } else {
         groupedApps.forEach { (letter, appsInSection) ->
             item(key = "drawer_section_$letter") {
+                val palette = LocalNephoPalette.current
                 Row(
                     modifier = Modifier
                         .fillMaxWidth()
@@ -333,36 +376,40 @@ fun LazyListScope.appDrawerSectionItems(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = CyanPulseContainer
+                        color = palette.accentContainer
                     ) {
                         Text(
                             text = letter,
                             style = MaterialTheme.typography.labelMedium.copy(
                                 fontWeight = FontWeight.Bold
                             ),
-                            color = CyanPulse,
+                            color = palette.accent,
                             modifier = Modifier.padding(horizontal = 10.dp, vertical = 3.dp)
                         )
                     }
                     HorizontalDivider(
                         modifier = Modifier.weight(1f),
-                        color = BorderHairline
+                        color = palette.border
                     )
                 }
             }
 
             items(items = appsInSection, key = { "drawer_app_${it.packageName}" }) { app ->
+                val palette = LocalNephoPalette.current
                 val isPinned = app.packageName in pinnedPackages
+                val rowShape = RoundedCornerShape(14.dp)
                 Surface(
-                    shape = RoundedCornerShape(14.dp),
-                    color = MidnightSurface,
-                    border = BorderStroke(
-                        1.dp,
-                        if (isPinned) CyanPulse.copy(alpha = 0.28f) else BorderHairline
-                    ),
+                    shape = rowShape,
+                    color = palette.surface,
                     modifier = Modifier
                         .fillMaxWidth()
-                        .clip(RoundedCornerShape(14.dp))
+                        .clip(rowShape)
+                        .calmingLitBorder(
+                            accentColor = if (isPinned) palette.calmBlue else palette.accent,
+                            cornerRadius = 14.dp,
+                            strokeWidth = 1.dp,
+                            intensity = if (isPinned) CalmBorderIntensity.AMBIENT else CalmBorderIntensity.SUBTLE
+                        )
                         .clickable { onLaunchApp(app) }
                         .testTag("drawer_app_row_${app.packageName}")
                 ) {
@@ -401,7 +448,7 @@ fun LazyListScope.appDrawerSectionItems(
                                 } else {
                                     stringResource(R.string.drawer_pin_shortcut)
                                 },
-                                tint = if (isPinned) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant,
+                                tint = if (isPinned) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant,
                                 modifier = Modifier.size(19.dp)
                             )
                         }
@@ -420,6 +467,7 @@ fun BottomShortcutDock(
     onSwipeUp: () -> Unit = {},
     modifier: Modifier = Modifier
 ) {
+    val palette = LocalNephoPalette.current
     val visibleDockApps = remember(pinnedApps) {
         pinnedApps.take(LauncherAppCatalog.MAX_DOCK_VISIBLE)
     }
@@ -427,23 +475,15 @@ fun BottomShortcutDock(
     Surface(
         modifier = modifier
             .fillMaxWidth()
-            .pointerInput(onSwipeUp) {
-                // Swiping up from the shortcut bar pulls up the alphabetical app search.
-                val triggerDistancePx = 48.dp.toPx()
-                var totalDy = 0f
-                detectVerticalDragGestures(
-                    onDragStart = { totalDy = 0f },
-                    onVerticalDrag = { _, dragAmount -> totalDy += dragAmount },
-                    onDragEnd = {
-                        if (totalDy < -triggerDistancePx) {
-                            onSwipeUp()
-                        }
-                    }
-                )
-            }
+            .calmingLitBorder(
+                accentColor = palette.accent,
+                strokeWidth = 1.15.dp,
+                intensity = CalmBorderIntensity.AMBIENT,
+                topEdgeOnly = true
+            )
+            .swipeUpGestureOverlay(onSwipeUp = onSwipeUp)
             .testTag("bottom_shortcut_dock"),
-        color = MidnightSurface,
-        border = BorderStroke(1.dp, BorderHairline),
+        color = palette.surface,
         shadowElevation = 8.dp
     ) {
         Row(
@@ -494,14 +534,20 @@ fun BottomShortcutDock(
                 }
             }
 
+            val expandShape = RoundedCornerShape(14.dp)
             Surface(
-                shape = RoundedCornerShape(14.dp),
-                color = CyanPulseContainer,
-                border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.45f)),
+                shape = expandShape,
+                color = palette.accentContainer,
                 modifier = Modifier
                     .padding(start = 4.dp)
                     .minimumInteractiveComponentSize()
-                    .clip(RoundedCornerShape(14.dp))
+                    .clip(expandShape)
+                    .calmingLitBorder(
+                        accentColor = palette.accent,
+                        cornerRadius = 14.dp,
+                        strokeWidth = 1.dp,
+                        intensity = CalmBorderIntensity.SUBTLE
+                    )
                     .clickable(onClick = onExpandDrawer)
                     .testTag("dock_expand_button")
             ) {
@@ -512,7 +558,7 @@ fun BottomShortcutDock(
                     Icon(
                         imageVector = Icons.Default.KeyboardArrowUp,
                         contentDescription = stringResource(R.string.dock_expand_label),
-                        tint = CyanPulse,
+                        tint = palette.accent,
                         modifier = Modifier.size(26.dp)
                     )
                 }
@@ -536,6 +582,8 @@ fun ShortcutDrawerSheet(
     onOpenDefaultHomeSettings: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val palette = LocalNephoPalette.current
+    val calmPrefs = LocalCalmVisualPrefs.current
     val sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true)
     var isEditing by rememberSaveable { mutableStateOf(false) }
     var showAddPicker by rememberSaveable { mutableStateOf(false) }
@@ -549,7 +597,7 @@ fun ShortcutDrawerSheet(
     ModalBottomSheet(
         onDismissRequest = onDismiss,
         sheetState = sheetState,
-        containerColor = MidnightSurface,
+        containerColor = palette.surface,
         contentColor = MaterialTheme.colorScheme.onSurface,
         modifier = Modifier.testTag("shortcut_drawer_sheet")
     ) {
@@ -619,7 +667,7 @@ fun ShortcutDrawerSheet(
                     }
                 )
                 SectionJumpChip(
-                    label = if (unreadCount > 0) {
+                    label = if (unreadCount > 0 && !calmPrefs.hideUnreadCounts) {
                         "${stringResource(R.string.dock_jump_feed)} ($unreadCount)"
                     } else {
                         stringResource(R.string.dock_jump_feed)
@@ -632,7 +680,7 @@ fun ShortcutDrawerSheet(
                     }
                 )
                 SectionJumpChip(
-                    label = if (linksCount > 0) {
+                    label = if (linksCount > 0 && !calmPrefs.hideUnreadCounts) {
                         "${stringResource(R.string.dock_jump_vault)} ($linksCount)"
                     } else {
                         stringResource(R.string.dock_jump_vault)
@@ -657,11 +705,19 @@ fun ShortcutDrawerSheet(
 
             // Default Home promotion banner when Nepho isn't yet default
             if (!isDefaultHome) {
+                val promoShape = RoundedCornerShape(16.dp)
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = ElevatedSurface,
-                    border = BorderStroke(1.dp, IndigoGlow.copy(alpha = 0.4f)),
-                    modifier = Modifier.fillMaxWidth()
+                    shape = promoShape,
+                    color = palette.elevatedSurface,
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clip(promoShape)
+                        .calmingLitBorder(
+                            accentColor = palette.secondaryAccent,
+                            cornerRadius = 16.dp,
+                            strokeWidth = 1.1.dp,
+                            intensity = CalmBorderIntensity.AMBIENT
+                        )
                 ) {
                     Row(
                         modifier = Modifier
@@ -673,7 +729,7 @@ fun ShortcutDrawerSheet(
                         Icon(
                             imageVector = Icons.Filled.Home,
                             contentDescription = null,
-                            tint = IndigoGlow,
+                            tint = palette.secondaryAccent,
                             modifier = Modifier.size(22.dp)
                         )
                         Column(modifier = Modifier.weight(1f)) {
@@ -694,8 +750,8 @@ fun ShortcutDrawerSheet(
                                 onDismiss()
                             },
                             colors = ButtonDefaults.buttonColors(
-                                containerColor = CyanPulse,
-                                contentColor = ObsidianBackground
+                                containerColor = palette.accent,
+                                contentColor = palette.background
                             ),
                             modifier = Modifier
                                 .minimumInteractiveComponentSize()
@@ -710,7 +766,7 @@ fun ShortcutDrawerSheet(
                 }
             }
 
-            HorizontalDivider(color = BorderHairline)
+            HorizontalDivider(color = palette.border)
 
             // Pinned Favorites header + Edit / Add controls
             Row(
@@ -721,7 +777,7 @@ fun ShortcutDrawerSheet(
                 Text(
                     text = "Pinned (${pinnedApps.size}/${LauncherAppCatalog.MAX_PINNED_SHORTCUTS})",
                     style = MaterialTheme.typography.titleMedium,
-                    color = CyanPulse
+                    color = palette.accent
                 )
                 Row(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                     TextButton(
@@ -750,7 +806,7 @@ fun ShortcutDrawerSheet(
                             showAddPicker = !showAddPicker
                             if (showAddPicker) isEditing = false
                         },
-                        border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.5f)),
+                        border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.45f)),
                         modifier = Modifier.testTag("drawer_add_shortcut_button")
                     ) {
                         Icon(
@@ -778,10 +834,10 @@ fun ShortcutDrawerSheet(
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = ElevatedSurface,
-                        unfocusedContainerColor = ElevatedSurface,
-                        focusedBorderColor = CyanPulse,
-                        unfocusedBorderColor = BorderHairline
+                        focusedContainerColor = palette.elevatedSurface,
+                        unfocusedContainerColor = palette.elevatedSurface,
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border
                     )
                 )
 
@@ -795,10 +851,10 @@ fun ShortcutDrawerSheet(
                         val isPinned = app.packageName in pinnedSet
                         Surface(
                             shape = RoundedCornerShape(12.dp),
-                            color = if (isPinned) CyanPulseContainer.copy(alpha = 0.45f) else ElevatedSurface,
+                            color = if (isPinned) palette.accentContainer.copy(alpha = 0.55f) else palette.elevatedSurface,
                             border = BorderStroke(
                                 1.dp,
-                                if (isPinned) CyanPulse.copy(alpha = 0.5f) else BorderHairline
+                                if (isPinned) palette.accent.copy(alpha = 0.45f) else palette.border
                             ),
                             modifier = Modifier
                                 .fillMaxWidth()
@@ -829,7 +885,7 @@ fun ShortcutDrawerSheet(
                                     } else {
                                         stringResource(R.string.drawer_pin_shortcut)
                                     },
-                                    tint = if (isPinned) CyanPulse else MaterialTheme.colorScheme.onSurfaceVariant
+                                    tint = if (isPinned) palette.accent else MaterialTheme.colorScheme.onSurfaceVariant
                                 )
                             }
                         }
@@ -850,13 +906,19 @@ fun ShortcutDrawerSheet(
                     maxItemsInEachRow = 4
                 ) {
                     pinnedApps.forEachIndexed { index, app ->
+                        val tileShape = RoundedCornerShape(14.dp)
                         Surface(
-                            shape = RoundedCornerShape(14.dp),
-                            color = ElevatedSurface,
-                            border = BorderStroke(1.dp, BorderHairline),
+                            shape = tileShape,
+                            color = palette.elevatedSurface,
                             modifier = Modifier
                                 .width(82.dp)
-                                .clip(RoundedCornerShape(14.dp))
+                                .clip(tileShape)
+                                .calmingLitBorder(
+                                    accentColor = palette.accent,
+                                    cornerRadius = 14.dp,
+                                    strokeWidth = 1.dp,
+                                    intensity = CalmBorderIntensity.SUBTLE
+                                )
                                 .clickable(enabled = !isEditing) {
                                     onLaunchApp(app)
                                     onDismiss()
@@ -904,7 +966,7 @@ fun ShortcutDrawerSheet(
                                             Icon(
                                                 imageVector = Icons.Default.Close,
                                                 contentDescription = stringResource(R.string.dock_remove_shortcut),
-                                                tint = CrimsonError,
+                                                tint = palette.crimson,
                                                 modifier = Modifier.size(15.dp)
                                             )
                                         }
@@ -941,6 +1003,7 @@ private fun SectionJumpChip(
     tag: String,
     onClick: () -> Unit
 ) {
+    val palette = LocalNephoPalette.current
     AssistChip(
         onClick = onClick,
         label = { Text(label, maxLines = 1) },
@@ -948,15 +1011,15 @@ private fun SectionJumpChip(
             Icon(
                 imageVector = icon,
                 contentDescription = null,
-                tint = CyanPulse,
+                tint = palette.accent,
                 modifier = Modifier.size(16.dp)
             )
         },
         colors = AssistChipDefaults.assistChipColors(
-            containerColor = HighSurface,
+            containerColor = palette.highSurface,
             labelColor = MaterialTheme.colorScheme.onSurface
         ),
-        border = BorderStroke(1.dp, BorderHairline),
+        border = BorderStroke(1.dp, palette.border),
         modifier = Modifier.testTag(tag)
     )
 }

@@ -18,6 +18,10 @@ import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.ExpandLess
+import androidx.compose.material.icons.filled.ExpandMore
+import androidx.compose.material.icons.filled.KeyboardArrowDown
+import androidx.compose.material.icons.filled.KeyboardArrowUp
 import androidx.compose.material.icons.outlined.Settings
 import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
@@ -37,6 +41,7 @@ import androidx.compose.material3.SwitchDefaults
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.material3.TimeInput
+import androidx.compose.material3.minimumInteractiveComponentSize
 import androidx.compose.material3.rememberTimePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -52,6 +57,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
 import androidx.compose.ui.semantics.contentDescription
 import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
@@ -59,12 +65,10 @@ import com.example.data.AppShadePreference
 import com.example.data.PulseNotificationItem
 import com.example.data.ShadeMode
 import com.example.data.SupportedApp
+import com.example.data.local.CalmVisualPrefs
+import com.example.data.local.HomeSectionId
 import com.example.data.local.HomeSectionPrefs
-import com.example.ui.theme.BorderHairline
-import com.example.ui.theme.CrimsonError
-import com.example.ui.theme.CyanPulse
-import com.example.ui.theme.CyanPulseContainer
-import com.example.ui.theme.MidnightSurface
+import com.example.ui.theme.LocalNephoPalette
 import java.text.SimpleDateFormat
 import java.util.Calendar
 import java.util.Date
@@ -159,6 +163,7 @@ fun SetReminderDialog(
     onSchedule: (triggerAtMillis: Long, note: String?) -> Unit,
     onClearReminder: () -> Unit
 ) {
+    val palette = LocalNephoPalette.current
     val initialCal = remember(item.key, item.reminderAt) {
         Calendar.getInstance().apply {
             if (item.reminderAt != null && item.reminderAt > System.currentTimeMillis()) {
@@ -304,7 +309,6 @@ fun SetReminderDialog(
                         set(Calendar.SECOND, 0)
                         set(Calendar.MILLISECOND, 0)
                     }
-                    // If chosen time today already passed, roll to tomorrow automatically
                     if (cal.timeInMillis <= System.currentTimeMillis()) {
                         cal.add(Calendar.DAY_OF_YEAR, 1)
                     }
@@ -326,7 +330,7 @@ fun SetReminderDialog(
                         },
                         modifier = Modifier.testTag("clear_reminder_button")
                     ) {
-                        Text("Clear", color = CrimsonError)
+                        Text("Clear", color = palette.crimson)
                     }
                 }
                 TextButton(onClick = onDismiss) {
@@ -349,6 +353,8 @@ fun ShadePreferencesDialog(
     onRequestNotificationPermission: () -> Unit,
     onDismiss: () -> Unit
 ) {
+    val palette = LocalNephoPalette.current
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
@@ -368,8 +374,8 @@ fun ShadePreferencesDialog(
                 if (!hasNotificationPermission) {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = MidnightSurface,
-                        border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.4f))
+                        color = palette.surface,
+                        border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.4f))
                     ) {
                         Row(
                             modifier = Modifier
@@ -407,7 +413,7 @@ fun ShadePreferencesDialog(
                     onOpenSystemSettings = null
                 )
 
-                HorizontalDivider(color = BorderHairline)
+                HorizontalDivider(color = palette.border)
 
                 LazyColumn(
                     modifier = Modifier
@@ -457,6 +463,8 @@ private fun ShadeModeRow(
     onSelectMode: (ShadeMode) -> Unit,
     onOpenSystemSettings: (() -> Unit)?
 ) {
+    val palette = LocalNephoPalette.current
+
     Column(
         modifier = Modifier.fillMaxWidth(),
         verticalArrangement = Arrangement.spacedBy(4.dp)
@@ -502,8 +510,8 @@ private fun ShadeModeRow(
                     checked = isOptedIn,
                     onCheckedChange = onToggleOptedIn,
                     colors = SwitchDefaults.colors(
-                        checkedThumbColor = MidnightSurface,
-                        checkedTrackColor = CyanPulse
+                        checkedThumbColor = palette.surface,
+                        checkedTrackColor = palette.accent
                     ),
                     modifier = Modifier
                         .semantics { contentDescription = "Intercept $title notifications" }
@@ -525,8 +533,8 @@ private fun ShadeModeRow(
                     label = { Text("Silence (Feed Only)") },
                     modifier = Modifier.testTag("shade_silent_$tagPrefix"),
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = CyanPulseContainer,
-                        selectedLabelColor = CyanPulse
+                        selectedContainerColor = palette.accentContainer,
+                        selectedLabelColor = palette.accent
                     )
                 )
                 FilterChip(
@@ -535,8 +543,8 @@ private fun ShadeModeRow(
                     label = { Text("Nepho Alert") },
                     modifier = Modifier.testTag("shade_alert_$tagPrefix"),
                     colors = FilterChipDefaults.filterChipColors(
-                        selectedContainerColor = CyanPulseContainer,
-                        selectedLabelColor = CyanPulse
+                        selectedContainerColor = palette.accentContainer,
+                        selectedLabelColor = palette.accent
                     )
                 )
                 if (allowBlock) {
@@ -546,8 +554,8 @@ private fun ShadeModeRow(
                         label = { Text("Block") },
                         modifier = Modifier.testTag("shade_blocked_$tagPrefix"),
                         colors = FilterChipDefaults.filterChipColors(
-                            selectedContainerColor = CrimsonError.copy(alpha = 0.18f),
-                            selectedLabelColor = CrimsonError
+                            selectedContainerColor = palette.crimsonContainer,
+                            selectedLabelColor = palette.crimson
                         )
                     )
                 }
@@ -556,7 +564,7 @@ private fun ShadeModeRow(
                 Text(
                     text = "Blocked — notifications are cancelled and never reach the feed or shade",
                     style = MaterialTheme.typography.bodySmall,
-                    color = CrimsonError,
+                    color = palette.crimson,
                     modifier = Modifier.testTag("blocked_label_$tagPrefix")
                 )
             }
@@ -575,13 +583,19 @@ private fun ShadeModeRow(
 fun HomeSectionsDialog(
     sections: HomeSectionPrefs,
     onSetSections: (HomeSectionPrefs) -> Unit,
-    onDismiss: () -> Unit
+    onDismiss: () -> Unit,
+    calmPrefs: CalmVisualPrefs = CalmVisualPrefs(),
+    onSetCalmPrefs: (CalmVisualPrefs) -> Unit = {},
+    onResetLayout: (() -> Unit)? = null
 ) {
+    val palette = LocalNephoPalette.current
+    val orderedSections = sections.normalizedOrder
+
     AlertDialog(
         onDismissRequest = onDismiss,
         title = {
             Text(
-                text = stringResource(R.string.home_sections_title),
+                text = stringResource(R.string.action_home_layout_and_calm),
                 style = MaterialTheme.typography.titleLarge
             )
         },
@@ -591,42 +605,104 @@ fun HomeSectionsDialog(
                 verticalArrangement = Arrangement.spacedBy(2.dp)
             ) {
                 Text(
-                    text = stringResource(R.string.home_sections_subtitle),
+                    text = stringResource(R.string.home_layout_subtitle),
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    modifier = Modifier.padding(bottom = 8.dp)
+                    modifier = Modifier.padding(bottom = 2.dp)
                 )
-                HomeSectionToggleRow(
-                    label = stringResource(R.string.home_section_clock),
-                    checked = sections.showClock,
-                    testTag = "home_section_toggle_clock",
-                    onCheckedChange = { onSetSections(sections.copy(showClock = it)) }
-                )
-                HomeSectionToggleRow(
-                    label = stringResource(R.string.home_section_music),
-                    checked = sections.showMusic,
-                    testTag = "home_section_toggle_music",
-                    onCheckedChange = { onSetSections(sections.copy(showMusic = it)) }
-                )
-                HomeSectionToggleRow(
-                    label = stringResource(R.string.home_section_calendar),
-                    checked = sections.showCalendar,
-                    testTag = "home_section_toggle_calendar",
-                    onCheckedChange = { onSetSections(sections.copy(showCalendar = it)) }
-                )
-                HomeSectionToggleRow(
-                    label = stringResource(R.string.home_section_app_drawer),
-                    checked = sections.showAppDrawer,
-                    testTag = "home_section_toggle_app_drawer",
-                    onCheckedChange = { onSetSections(sections.copy(showAppDrawer = it)) }
-                )
+
+                orderedSections.forEachIndexed { index, sectionId ->
+                    val label = when (sectionId) {
+                        HomeSectionId.CLOCK -> stringResource(R.string.home_section_clock)
+                        HomeSectionId.MUSIC -> stringResource(R.string.home_section_music)
+                        HomeSectionId.CALENDAR -> stringResource(R.string.home_section_calendar)
+                        HomeSectionId.INBOX -> stringResource(R.string.home_section_inbox)
+                        HomeSectionId.APPS -> stringResource(R.string.home_section_app_drawer)
+                    }
+                    val toggleTag = when (sectionId) {
+                        HomeSectionId.CLOCK -> "home_section_toggle_clock"
+                        HomeSectionId.MUSIC -> "home_section_toggle_music"
+                        HomeSectionId.CALENDAR -> "home_section_toggle_calendar"
+                        HomeSectionId.INBOX -> "home_section_toggle_inbox"
+                        HomeSectionId.APPS -> "home_section_toggle_app_drawer"
+                    }
+                    val idKey = sectionId.name.lowercase()
+                    val isVisible = sections.isVisible(sectionId)
+                    val isMinimized = sections.isMinimized(sectionId)
+
+                    HomeSectionOrderRow(
+                        label = label,
+                        visible = isVisible,
+                        minimized = isMinimized,
+                        canMoveUp = index > 0,
+                        canMoveDown = index < orderedSections.lastIndex,
+                        toggleTag = toggleTag,
+                        idKey = idKey,
+                        onToggleVisible = { onSetSections(sections.withVisibility(sectionId, it)) },
+                        onToggleMinimized = { onSetSections(sections.toggleMinimized(sectionId)) },
+                        onMoveUp = { onSetSections(sections.moveSection(sectionId, -1)) },
+                        onMoveDown = { onSetSections(sections.moveSection(sectionId, 1)) }
+                    )
+                }
+
                 HomeSectionToggleRow(
                     label = stringResource(R.string.home_section_dock),
                     checked = sections.showShortcutDock,
                     testTag = "home_section_toggle_dock",
                     onCheckedChange = { onSetSections(sections.copy(showShortcutDock = it)) }
                 )
+
+                HorizontalDivider(
+                    color = palette.border,
+                    modifier = Modifier.padding(vertical = 4.dp)
+                )
+
+                Text(
+                    text = stringResource(R.string.calm_section_title),
+                    style = MaterialTheme.typography.labelLarge.copy(fontWeight = FontWeight.SemiBold),
+                    color = palette.accent
+                )
+
+                CalmToggleRow(
+                    title = stringResource(R.string.calm_palette_label),
+                    description = stringResource(R.string.calm_palette_desc),
+                    checked = calmPrefs.calmPaletteEnabled,
+                    testTag = "calm_toggle_palette",
+                    onCheckedChange = {
+                        onSetCalmPrefs(calmPrefs.copy(calmPaletteEnabled = it))
+                    }
+                )
+                CalmToggleRow(
+                    title = stringResource(R.string.calm_monochrome_label),
+                    description = stringResource(R.string.calm_monochrome_desc),
+                    checked = calmPrefs.monochromeIcons,
+                    testTag = "calm_toggle_monochrome",
+                    onCheckedChange = {
+                        onSetCalmPrefs(calmPrefs.copy(monochromeIcons = it))
+                    }
+                )
+                CalmToggleRow(
+                    title = stringResource(R.string.calm_hide_counts_label),
+                    description = stringResource(R.string.calm_hide_counts_desc),
+                    checked = calmPrefs.hideUnreadCounts,
+                    testTag = "calm_toggle_hide_counts",
+                    onCheckedChange = {
+                        onSetCalmPrefs(calmPrefs.copy(hideUnreadCounts = it))
+                    }
+                )
             }
+        },
+        dismissButton = if (onResetLayout != null) {
+            {
+                TextButton(
+                    onClick = onResetLayout,
+                    modifier = Modifier.testTag("home_layout_reset_button")
+                ) {
+                    Text(stringResource(R.string.home_layout_reset))
+                }
+            }
+        } else {
+            null
         },
         confirmButton = {
             TextButton(
@@ -640,24 +716,190 @@ fun HomeSectionsDialog(
 }
 
 @Composable
+private fun CalmToggleRow(
+    title: String,
+    description: String,
+    checked: Boolean,
+    testTag: String,
+    onCheckedChange: (Boolean) -> Unit
+) {
+    val palette = LocalNephoPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp))
+            .clickable { onCheckedChange(!checked) }
+            .padding(vertical = 4.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
+    ) {
+        Column(
+            modifier = Modifier
+                .weight(1f)
+                .padding(end = 8.dp),
+            verticalArrangement = Arrangement.spacedBy(2.dp)
+        ) {
+            Text(
+                text = title,
+                style = MaterialTheme.typography.bodyMedium,
+                color = MaterialTheme.colorScheme.onSurface
+            )
+            Text(
+                text = description,
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant
+            )
+        }
+        Switch(
+            checked = checked,
+            onCheckedChange = onCheckedChange,
+            colors = SwitchDefaults.colors(
+                checkedThumbColor = palette.surface,
+                checkedTrackColor = palette.accent
+            ),
+            modifier = Modifier
+                .semantics { contentDescription = title }
+                .testTag(testTag)
+        )
+    }
+}
+
+@Composable
+private fun HomeSectionOrderRow(
+    label: String,
+    visible: Boolean,
+    minimized: Boolean,
+    canMoveUp: Boolean,
+    canMoveDown: Boolean,
+    toggleTag: String,
+    idKey: String,
+    onToggleVisible: (Boolean) -> Unit,
+    onToggleMinimized: () -> Unit,
+    onMoveUp: () -> Unit,
+    onMoveDown: () -> Unit
+) {
+    val palette = LocalNephoPalette.current
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(10.dp)),
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .minimumInteractiveComponentSize()
+                .clip(RoundedCornerShape(10.dp))
+                .clickable { onToggleVisible(!visible) }
+                .padding(horizontal = 4.dp)
+                .testTag(toggleTag),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            Checkbox(
+                checked = visible,
+                onCheckedChange = null,
+                colors = CheckboxDefaults.colors(checkedColor = palette.accent)
+            )
+            Text(
+                text = label,
+                style = MaterialTheme.typography.bodyMedium,
+                color = if (visible) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                maxLines = 1,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        IconButton(
+            onClick = onToggleMinimized,
+            enabled = visible,
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("home_section_minimize_$idKey")
+        ) {
+            Icon(
+                imageVector = if (minimized) Icons.Default.ExpandMore else Icons.Default.ExpandLess,
+                contentDescription = if (minimized) {
+                    stringResource(R.string.home_section_expand, label)
+                } else {
+                    stringResource(R.string.home_section_minimize, label)
+                },
+                tint = when {
+                    !visible -> MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.35f)
+                    minimized -> palette.accent
+                    else -> MaterialTheme.colorScheme.onSurfaceVariant
+                },
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        IconButton(
+            onClick = onMoveUp,
+            enabled = canMoveUp,
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("home_section_move_up_$idKey")
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowUp,
+                contentDescription = stringResource(R.string.home_section_move_up, label),
+                tint = if (canMoveUp) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                },
+                modifier = Modifier.size(20.dp)
+            )
+        }
+
+        IconButton(
+            onClick = onMoveDown,
+            enabled = canMoveDown,
+            modifier = Modifier
+                .minimumInteractiveComponentSize()
+                .testTag("home_section_move_down_$idKey")
+        ) {
+            Icon(
+                imageVector = Icons.Default.KeyboardArrowDown,
+                contentDescription = stringResource(R.string.home_section_move_down, label),
+                tint = if (canMoveDown) {
+                    MaterialTheme.colorScheme.onSurface
+                } else {
+                    MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.3f)
+                },
+                modifier = Modifier.size(20.dp)
+            )
+        }
+    }
+}
+
+@Composable
 private fun HomeSectionToggleRow(
     label: String,
     checked: Boolean,
     testTag: String,
     onCheckedChange: (Boolean) -> Unit
 ) {
+    val palette = LocalNephoPalette.current
     Row(
         modifier = Modifier
             .fillMaxWidth()
+            .minimumInteractiveComponentSize()
             .clip(RoundedCornerShape(10.dp))
             .clickable { onCheckedChange(!checked) }
+            .padding(horizontal = 4.dp)
             .testTag(testTag),
-        verticalAlignment = Alignment.CenterVertically
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(8.dp)
     ) {
         Checkbox(
             checked = checked,
-            onCheckedChange = onCheckedChange,
-            colors = CheckboxDefaults.colors(checkedColor = CyanPulse)
+            onCheckedChange = null,
+            colors = CheckboxDefaults.colors(checkedColor = palette.accent)
         )
         Text(
             text = label,

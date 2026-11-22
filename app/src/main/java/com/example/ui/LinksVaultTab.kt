@@ -23,6 +23,8 @@ import androidx.compose.foundation.lazy.LazyListScope
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.foundation.text.KeyboardActions
+import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.OpenInNew
 import androidx.compose.material.icons.filled.Close
@@ -49,19 +51,19 @@ import androidx.compose.runtime.remember
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.input.ImeAction
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.example.R
 import com.example.data.ExtractedLinkItem
-import com.example.ui.theme.AmberSignal
-import com.example.ui.theme.BorderHairline
-import com.example.ui.theme.CyanPulse
-import com.example.ui.theme.CyanPulseContainer
-import com.example.ui.theme.HighSurface
-import com.example.ui.theme.MidnightSurface
+import com.example.ui.theme.LocalCalmVisualPrefs
+import com.example.ui.theme.LocalNephoPalette
 import java.text.SimpleDateFormat
 import java.util.Date
 import java.util.Locale
@@ -72,7 +74,8 @@ fun LinksVaultTab(
     searchQuery: String,
     onSearchQueryChange: (String) -> Unit,
     onToggleLinkStar: (String, Boolean) -> Unit,
-    modifier: Modifier = Modifier
+    modifier: Modifier = Modifier,
+    onSearchFocusChanged: (Boolean) -> Unit = {}
 ) {
     val context = LocalContext.current
     val timeFormatter = remember { SimpleDateFormat("HH:mm", Locale.getDefault()) }
@@ -90,7 +93,8 @@ fun LinksVaultTab(
             timeFormatter = timeFormatter,
             context = context,
             onSearchQueryChange = onSearchQueryChange,
-            onToggleLinkStar = onToggleLinkStar
+            onToggleLinkStar = onToggleLinkStar,
+            onSearchFocusChanged = onSearchFocusChanged
         )
     }
 }
@@ -101,9 +105,14 @@ fun LazyListScope.linksVaultSectionItems(
     timeFormatter: SimpleDateFormat,
     context: Context,
     onSearchQueryChange: (String) -> Unit,
-    onToggleLinkStar: (String, Boolean) -> Unit
+    onToggleLinkStar: (String, Boolean) -> Unit,
+    onSearchFocusChanged: (Boolean) -> Unit = {}
 ) {
         item(key = "vault_header") {
+            val palette = LocalNephoPalette.current
+            val calmPrefs = LocalCalmVisualPrefs.current
+            val keyboardController = LocalSoftwareKeyboardController.current
+            val focusManager = LocalFocusManager.current
             Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
                 Row(
                     modifier = Modifier.fillMaxWidth(),
@@ -111,16 +120,22 @@ fun LazyListScope.linksVaultSectionItems(
                     verticalAlignment = Alignment.CenterVertically
                 ) {
                     Text(
-                        text = "${links.size} Deduplicated URL${if (links.size == 1) "" else "s"}",
+                        text = if (calmPrefs.hideUnreadCounts) {
+                            stringResource(R.string.calm_vault_header)
+                        } else {
+                            "${links.size} Deduplicated URL${if (links.size == 1) "" else "s"}"
+                        },
                         style = MaterialTheme.typography.titleMedium,
-                        color = CyanPulse
+                        color = palette.accent
                     )
-                    val domainCount = links.map { it.domain }.distinct().size
-                    Text(
-                        text = "$domainCount domain${if (domainCount == 1) "" else "s"}",
-                        style = MaterialTheme.typography.labelSmall,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
+                    if (!calmPrefs.hideUnreadCounts) {
+                        val domainCount = links.map { it.domain }.distinct().size
+                        Text(
+                            text = "$domainCount domain${if (domainCount == 1) "" else "s"}",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant
+                        )
+                    }
                 }
 
                 OutlinedTextField(
@@ -128,6 +143,8 @@ fun LazyListScope.linksVaultSectionItems(
                     onValueChange = onSearchQueryChange,
                     modifier = Modifier
                         .fillMaxWidth()
+                        .keepKeyboardOpenArea("vault_search")
+                        .onFocusChanged { onSearchFocusChanged(it.isFocused) }
                         .testTag("vault_search_input"),
                     placeholder = {
                         Text(
@@ -152,12 +169,19 @@ fun LazyListScope.linksVaultSectionItems(
                         }
                     },
                     singleLine = true,
+                    keyboardOptions = KeyboardOptions(imeAction = ImeAction.Search),
+                    keyboardActions = KeyboardActions(
+                        onSearch = {
+                            focusManager.clearFocus(force = true)
+                            keyboardController?.hide()
+                        }
+                    ),
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = MidnightSurface,
-                        unfocusedContainerColor = MidnightSurface,
-                        focusedBorderColor = CyanPulse,
-                        unfocusedBorderColor = BorderHairline
+                        focusedContainerColor = palette.surface,
+                        unfocusedContainerColor = palette.surface,
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border
                     )
                 )
             }
@@ -165,13 +189,21 @@ fun LazyListScope.linksVaultSectionItems(
 
         if (links.isEmpty()) {
             item(key = "empty_vault") {
+                val palette = LocalNephoPalette.current
+                val emptyShape = RoundedCornerShape(18.dp)
                 Card(
                     modifier = Modifier
                         .fillMaxWidth()
+                        .clip(emptyShape)
+                        .calmingLitBorder(
+                            accentColor = palette.accent,
+                            cornerRadius = 18.dp,
+                            strokeWidth = 1.15.dp,
+                            intensity = CalmBorderIntensity.AMBIENT
+                        )
                         .testTag("empty_vault_card"),
-                    shape = RoundedCornerShape(18.dp),
-                    border = BorderStroke(1.dp, BorderHairline),
-                    colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+                    shape = emptyShape,
+                    colors = CardDefaults.cardColors(containerColor = palette.surface)
                 ) {
                     Column(
                         modifier = Modifier
@@ -184,13 +216,13 @@ fun LazyListScope.linksVaultSectionItems(
                             modifier = Modifier
                                 .size(56.dp)
                                 .clip(CircleShape)
-                                .background(CyanPulseContainer),
+                                .background(palette.accentContainer),
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
                                 imageVector = Icons.Default.Link,
                                 contentDescription = null,
-                                tint = CyanPulse,
+                                tint = palette.accent,
                                 modifier = Modifier.size(28.dp)
                             )
                         }
@@ -235,18 +267,25 @@ private fun VaultLinkCard(
     onOpenBrowser: () -> Unit,
     onCopyLink: () -> Unit
 ) {
+    val palette = LocalNephoPalette.current
     val app = link.supportedApp
+    val appTint = palette.accentForApp(app.accentColor)
+    val cardBorderColor = if (link.isStarred) palette.amber else feedAppColor(link.packageName)
+    val cardShape = RoundedCornerShape(16.dp)
 
     Card(
         modifier = Modifier
             .fillMaxWidth()
+            .clip(cardShape)
+            .calmingLitBorder(
+                accentColor = cardBorderColor,
+                cornerRadius = 16.dp,
+                strokeWidth = if (link.isStarred) 1.3.dp else 1.1.dp,
+                intensity = if (link.isStarred) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.AMBIENT
+            )
             .testTag("vault_link_card_${link.id}"),
-        shape = RoundedCornerShape(16.dp),
-        border = BorderStroke(
-            width = 1.dp,
-            color = if (link.isStarred) AmberSignal.copy(alpha = 0.6f) else BorderHairline
-        ),
-        colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+        shape = cardShape,
+        colors = CardDefaults.cardColors(containerColor = palette.surface)
     ) {
         Column(
             modifier = Modifier
@@ -265,23 +304,23 @@ private fun VaultLinkCard(
                 ) {
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = app.accentColor.copy(alpha = 0.18f)
+                        color = if (palette.isCalmMode) palette.highSurface else appTint.copy(alpha = 0.18f)
                     ) {
                         Text(
                             text = link.appLabel,
                             style = MaterialTheme.typography.labelSmall,
-                            color = app.accentColor,
+                            color = appTint,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
                     Surface(
                         shape = RoundedCornerShape(8.dp),
-                        color = HighSurface
+                        color = palette.highSurface
                     ) {
                         Text(
                             text = link.domain,
                             style = MaterialTheme.typography.labelSmall,
-                            color = CyanPulse,
+                            color = palette.accent,
                             modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
                         )
                     }
@@ -292,7 +331,7 @@ private fun VaultLinkCard(
                         Text(
                             text = "Starred",
                             style = MaterialTheme.typography.labelSmall,
-                            color = AmberSignal
+                            color = palette.amber
                         )
                     }
                     IconButton(
@@ -304,7 +343,7 @@ private fun VaultLinkCard(
                         Icon(
                             imageVector = if (link.isStarred) Icons.Filled.Star else Icons.Outlined.StarBorder,
                             contentDescription = if (link.isStarred) "Unstar link" else "Star link",
-                            tint = if (link.isStarred) AmberSignal else MaterialTheme.colorScheme.onSurfaceVariant
+                            tint = if (link.isStarred) palette.amber else MaterialTheme.colorScheme.onSurfaceVariant
                         )
                     }
                 }
@@ -344,8 +383,8 @@ private fun VaultLinkCard(
                         .minimumInteractiveComponentSize()
                         .testTag("open_browser_button_${link.id}"),
                     colors = ButtonDefaults.buttonColors(
-                        containerColor = CyanPulseContainer,
-                        contentColor = CyanPulse
+                        containerColor = palette.accentContainer,
+                        contentColor = palette.accent
                     )
                 ) {
                     Icon(
@@ -367,7 +406,7 @@ private fun VaultLinkCard(
                         .weight(1f)
                         .minimumInteractiveComponentSize()
                         .testTag("copy_link_button_${link.id}"),
-                    border = BorderStroke(1.dp, BorderHairline)
+                    border = BorderStroke(1.dp, palette.border)
                 ) {
                     Icon(
                         imageVector = Icons.Default.ContentCopy,

@@ -45,7 +45,11 @@ object NephoWidgetSnapshotBuilder {
         isNotificationAccessGranted: Boolean,
         refreshedAt: Long = System.currentTimeMillis()
     ): NephoWidgetSnapshot {
-        val unread = activeNotifications.filter { !it.isDismissed && !it.isRead }
+        val unread = activeNotifications.filter {
+            !it.isDismissed &&
+                !it.isRead &&
+                com.example.notifications.CommunicationMessageFilter.shouldDisplayInFeed(it)
+        }
 
         val perAppCounts = unread
             .groupBy { it.packageName }

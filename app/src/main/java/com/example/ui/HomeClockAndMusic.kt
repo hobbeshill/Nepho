@@ -80,18 +80,7 @@ import com.example.launcher.ClockAlarmHelper
 import com.example.launcher.LauncherAppInfo
 import com.example.launcher.MediaPlaybackState
 import com.example.launcher.WeatherUiState
-import com.example.ui.theme.AmberSignal
-import com.example.ui.theme.AmberSignalContainer
-import com.example.ui.theme.BorderHairline
-import com.example.ui.theme.CyanPulse
-import com.example.ui.theme.CyanPulseContainer
-import com.example.ui.theme.ElevatedSurface
-import com.example.ui.theme.EmeraldOk
-import com.example.ui.theme.EmeraldOkContainer
-import com.example.ui.theme.HighSurface
-import com.example.ui.theme.IndigoGlow
-import com.example.ui.theme.MidnightSurface
-import com.example.ui.theme.ObsidianBackground
+import com.example.ui.theme.LocalNephoPalette
 import com.example.ui.theme.SpaceGroteskFontFamily
 import kotlinx.coroutines.delay
 import java.text.SimpleDateFormat
@@ -105,9 +94,11 @@ fun HomeClockCard(
     onClick: () -> Unit,
     weatherState: WeatherUiState = WeatherUiState(),
     onWeatherClick: () -> Unit = {},
+    onMinimize: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val palette = LocalNephoPalette.current
     val is24Hour = remember(context) { DateFormat.is24HourFormat(context) }
     var nowMillis by remember { mutableStateOf(System.currentTimeMillis()) }
 
@@ -130,31 +121,43 @@ fun HomeClockCard(
     val amPmText = if (is24Hour) "" else amPmFmt.format(nowDate)
     val dateText = dateFmt.format(nowDate)
 
+    val cardShape = RoundedCornerShape(20.dp)
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .clip(cardShape)
+            .calmingLitBorder(
+                accentColor = palette.accent,
+                cornerRadius = 20.dp,
+                strokeWidth = 1.15.dp,
+                intensity = CalmBorderIntensity.AMBIENT
+            )
             .testTag("home_clock_card_container"),
-        shape = RoundedCornerShape(20.dp),
-        border = BorderStroke(1.dp, BorderHairline),
-        colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+        shape = cardShape,
+        colors = CardDefaults.cardColors(containerColor = palette.surface)
     ) {
+        val backgroundModifier = if (palette.isCalmMode) {
+            Modifier.background(palette.surface)
+        } else {
+            Modifier.background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        palette.accent.copy(alpha = 0.10f),
+                        palette.surface,
+                        palette.secondaryAccent.copy(alpha = 0.08f)
+                    )
+                )
+            )
+        }
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .background(
-                    Brush.linearGradient(
-                        colors = listOf(
-                            CyanPulse.copy(alpha = 0.10f),
-                            MidnightSurface,
-                            IndigoGlow.copy(alpha = 0.08f)
-                        )
-                    )
-                )
+                .then(backgroundModifier)
                 .padding(horizontal = 16.dp, vertical = 14.dp)
         ) {
             Row(
                 modifier = Modifier.fillMaxWidth(),
-                horizontalArrangement = Arrangement.spacedBy(12.dp),
+                horizontalArrangement = Arrangement.spacedBy(10.dp),
                 verticalAlignment = Alignment.CenterVertically
             ) {
                 // Clock + Date + Next Alarm (tap opens the Clock/Alarms app directly)
@@ -191,7 +194,7 @@ fun HomeClockCard(
                                     fontFamily = SpaceGroteskFontFamily,
                                     fontWeight = FontWeight.SemiBold
                                 ),
-                                color = CyanPulse,
+                                color = palette.accent,
                                 modifier = Modifier.padding(bottom = 6.dp)
                             )
                         }
@@ -208,13 +211,18 @@ fun HomeClockCard(
 
                     Spacer(Modifier.height(2.dp))
 
+                    val alarmPillShape = RoundedCornerShape(10.dp)
                     Surface(
-                        shape = RoundedCornerShape(10.dp),
-                        color = if (nextAlarmSummary != null) AmberSignalContainer else HighSurface,
-                        border = BorderStroke(
-                            1.dp,
-                            if (nextAlarmSummary != null) AmberSignal.copy(alpha = 0.45f) else BorderHairline
-                        )
+                        shape = alarmPillShape,
+                        color = if (nextAlarmSummary != null) palette.amberContainer else palette.highSurface,
+                        modifier = Modifier
+                            .clip(alarmPillShape)
+                            .calmingLitBorder(
+                                accentColor = if (nextAlarmSummary != null) palette.amber else palette.accent,
+                                cornerRadius = 10.dp,
+                                strokeWidth = 1.dp,
+                                intensity = CalmBorderIntensity.SUBTLE
+                            )
                     ) {
                         Row(
                             modifier = Modifier.padding(horizontal = 9.dp, vertical = 5.dp),
@@ -228,7 +236,7 @@ fun HomeClockCard(
                                     Icons.Outlined.AlarmAdd
                                 },
                                 contentDescription = null,
-                                tint = if (nextAlarmSummary != null) AmberSignal else CyanPulse,
+                                tint = if (nextAlarmSummary != null) palette.amber else palette.accent,
                                 modifier = Modifier.size(14.dp)
                             )
                             Text(
@@ -238,7 +246,7 @@ fun HomeClockCard(
                                     stringResource(R.string.clock_tap_hint)
                                 },
                                 style = MaterialTheme.typography.labelSmall,
-                                color = if (nextAlarmSummary != null) AmberSignal else CyanPulse,
+                                color = if (nextAlarmSummary != null) palette.amber else palette.accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.testTag("home_clock_alarm_pill")
@@ -248,21 +256,20 @@ fun HomeClockCard(
                 }
 
                 // Weather Area inside Clock Card (tap to view/configure weather & add/open weather app shortcut)
+                val weatherShape = RoundedCornerShape(16.dp)
                 Surface(
-                    shape = RoundedCornerShape(16.dp),
-                    color = ElevatedSurface.copy(alpha = 0.92f),
-                    border = BorderStroke(
-                        1.dp,
-                        if (weatherState.hasWeatherData || weatherState.shortcutApp != null) {
-                            CyanPulse.copy(alpha = 0.35f)
-                        } else {
-                            BorderHairline
-                        }
-                    ),
+                    shape = weatherShape,
+                    color = palette.elevatedSurface.copy(alpha = 0.92f),
                     modifier = Modifier
-                        .widthIn(min = 112.dp, max = 148.dp)
+                        .widthIn(min = 108.dp, max = 142.dp)
                         .minimumInteractiveComponentSize()
-                        .clip(RoundedCornerShape(16.dp))
+                        .clip(weatherShape)
+                        .calmingLitBorder(
+                            accentColor = palette.accent,
+                            cornerRadius = 16.dp,
+                            strokeWidth = 1.dp,
+                            intensity = CalmBorderIntensity.SUBTLE
+                        )
                         .clickable(onClick = onWeatherClick)
                         .testTag("home_clock_weather_area")
                 ) {
@@ -294,7 +301,7 @@ fun HomeClockCard(
                             Text(
                                 text = weatherState.conditionLabel,
                                 style = MaterialTheme.typography.labelSmall,
-                                color = CyanPulse,
+                                color = palette.accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis
                             )
@@ -316,7 +323,7 @@ fun HomeClockCard(
                                         Icon(
                                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
                                             contentDescription = null,
-                                            tint = CyanPulse,
+                                            tint = palette.accent,
                                             modifier = Modifier.size(11.dp)
                                         )
                                     }
@@ -336,7 +343,7 @@ fun HomeClockCard(
                                 style = MaterialTheme.typography.labelMedium.copy(
                                     fontWeight = FontWeight.SemiBold
                                 ),
-                                color = CyanPulse,
+                                color = palette.accent,
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.testTag("home_clock_weather_cta")
@@ -352,6 +359,15 @@ fun HomeClockCard(
                         }
                     }
                 }
+
+                if (onMinimize != null) {
+                    SectionCollapseIconButton(
+                        minimized = false,
+                        sectionName = stringResource(R.string.home_section_clock),
+                        onToggle = onMinimize,
+                        testTag = "minimize_section_clock"
+                    )
+                }
             }
         }
     }
@@ -364,6 +380,7 @@ fun QuickAlarmDialog(
     onDismiss: () -> Unit
 ) {
     val context = LocalContext.current
+    val palette = LocalNephoPalette.current
     val is24Hour = remember(context) { DateFormat.is24HourFormat(context) }
 
     val initialCal = remember {
@@ -381,14 +398,21 @@ fun QuickAlarmDialog(
         onDismissRequest = onDismiss,
         properties = DialogProperties(usePlatformDefaultWidth = false)
     ) {
+        val dialogShape = RoundedCornerShape(22.dp)
         Surface(
             modifier = Modifier
                 .fillMaxWidth(0.92f)
                 .widthIn(max = 460.dp)
+                .clip(dialogShape)
+                .calmingLitBorder(
+                    accentColor = palette.accent,
+                    cornerRadius = 22.dp,
+                    strokeWidth = 1.15.dp,
+                    intensity = CalmBorderIntensity.AMBIENT
+                )
                 .testTag("quick_alarm_dialog"),
-            shape = RoundedCornerShape(22.dp),
-            color = MidnightSurface,
-            border = BorderStroke(1.dp, BorderHairline)
+            shape = dialogShape,
+            color = palette.surface
         ) {
             Column(
                 modifier = Modifier
@@ -409,7 +433,7 @@ fun QuickAlarmDialog(
                         Icon(
                             imageVector = Icons.Filled.AccessAlarm,
                             contentDescription = null,
-                            tint = CyanPulse,
+                            tint = palette.accent,
                             modifier = Modifier.size(22.dp)
                         )
                         Text(
@@ -441,8 +465,8 @@ fun QuickAlarmDialog(
                 // Crisp digital time adjuster that adapts to both Portrait and Landscape
                 Surface(
                     shape = RoundedCornerShape(16.dp),
-                    color = ElevatedSurface,
-                    border = BorderStroke(1.dp, BorderHairline),
+                    color = palette.elevatedSurface,
+                    border = BorderStroke(1.dp, palette.border),
                     modifier = Modifier.fillMaxWidth()
                 ) {
                     Column(
@@ -458,7 +482,7 @@ fun QuickAlarmDialog(
                                 fontFamily = SpaceGroteskFontFamily,
                                 fontSize = 36.sp
                             ),
-                            color = CyanPulse,
+                            color = palette.accent,
                             modifier = Modifier.testTag("alarm_selected_time_text")
                         )
 
@@ -503,14 +527,14 @@ fun QuickAlarmDialog(
                                     )
                                     OutlinedButton(
                                         onClick = { selectedHour = (selectedHour + 12) % 24 },
-                                        border = BorderStroke(1.dp, CyanPulse.copy(alpha = 0.5f)),
+                                        border = BorderStroke(1.dp, palette.accent.copy(alpha = 0.5f)),
                                         modifier = Modifier
                                             .minimumInteractiveComponentSize()
                                             .testTag("alarm_ampm_toggle")
                                     ) {
                                         Text(
                                             text = if (isPm) "PM" else "AM",
-                                            color = CyanPulse,
+                                            color = palette.accent,
                                             style = MaterialTheme.typography.labelLarge
                                         )
                                     }
@@ -535,7 +559,7 @@ fun QuickAlarmDialog(
                         },
                         label = { Text(stringResource(R.string.alarm_preset_15m)) },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = HighSurface,
+                            containerColor = palette.highSurface,
                             labelColor = MaterialTheme.colorScheme.onSurface
                         ),
                         modifier = Modifier.testTag("alarm_preset_15m")
@@ -548,7 +572,7 @@ fun QuickAlarmDialog(
                         },
                         label = { Text(stringResource(R.string.alarm_preset_30m)) },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = HighSurface,
+                            containerColor = palette.highSurface,
                             labelColor = MaterialTheme.colorScheme.onSurface
                         ),
                         modifier = Modifier.testTag("alarm_preset_30m")
@@ -560,7 +584,7 @@ fun QuickAlarmDialog(
                         },
                         label = { Text(stringResource(R.string.alarm_preset_7am)) },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = HighSurface,
+                            containerColor = palette.highSurface,
                             labelColor = MaterialTheme.colorScheme.onSurface
                         ),
                         modifier = Modifier.testTag("alarm_preset_7am")
@@ -572,7 +596,7 @@ fun QuickAlarmDialog(
                         },
                         label = { Text(stringResource(R.string.alarm_preset_8am)) },
                         colors = AssistChipDefaults.assistChipColors(
-                            containerColor = HighSurface,
+                            containerColor = palette.highSurface,
                             labelColor = MaterialTheme.colorScheme.onSurface
                         ),
                         modifier = Modifier.testTag("alarm_preset_8am")
@@ -589,10 +613,10 @@ fun QuickAlarmDialog(
                     singleLine = true,
                     shape = RoundedCornerShape(14.dp),
                     colors = OutlinedTextFieldDefaults.colors(
-                        focusedContainerColor = ElevatedSurface,
-                        unfocusedContainerColor = ElevatedSurface,
-                        focusedBorderColor = CyanPulse,
-                        unfocusedBorderColor = BorderHairline
+                        focusedContainerColor = palette.elevatedSurface,
+                        unfocusedContainerColor = palette.elevatedSurface,
+                        focusedBorderColor = palette.accent,
+                        unfocusedBorderColor = palette.border
                     )
                 )
 
@@ -610,8 +634,8 @@ fun QuickAlarmDialog(
                             .minimumInteractiveComponentSize()
                             .testTag("alarm_confirm_button"),
                         colors = ButtonDefaults.buttonColors(
-                            containerColor = CyanPulse,
-                            contentColor = ObsidianBackground
+                            containerColor = palette.accent,
+                            contentColor = palette.background
                         )
                     ) {
                         Icon(
@@ -635,7 +659,7 @@ fun QuickAlarmDialog(
                             .fillMaxWidth()
                             .minimumInteractiveComponentSize()
                             .testTag("alarm_open_clock_button"),
-                        border = BorderStroke(1.dp, BorderHairline)
+                        border = BorderStroke(1.dp, palette.border)
                     ) {
                         Icon(
                             imageVector = Icons.AutoMirrored.Filled.OpenInNew,
@@ -715,33 +739,45 @@ fun HomeMusicCard(
     onGrantNotificationAccess: () -> Unit,
     preferredMusicApp: LauncherAppInfo? = null,
     onChooseMusicService: () -> Unit = {},
+    onMinimize: (() -> Unit)? = null,
     modifier: Modifier = Modifier
 ) {
-    val accent = if (mediaState.isActive && mediaState.isPlaying) EmeraldOk else CyanPulse
+    val palette = LocalNephoPalette.current
+    val accent = if (mediaState.isActive && mediaState.isPlaying) palette.emerald else palette.accent
+    val sectionLabel = stringResource(R.string.home_section_music)
 
+    val musicCardShape = RoundedCornerShape(18.dp)
     Card(
         modifier = modifier
             .fillMaxWidth()
+            .clip(musicCardShape)
+            .calmingLitBorder(
+                accentColor = accent,
+                cornerRadius = 18.dp,
+                strokeWidth = if (mediaState.isActive && mediaState.isPlaying) 1.35.dp else 1.15.dp,
+                intensity = if (mediaState.isActive && mediaState.isPlaying) CalmBorderIntensity.ACTIVE else CalmBorderIntensity.AMBIENT
+            )
             .testTag("home_music_card"),
-        shape = RoundedCornerShape(18.dp),
-        border = BorderStroke(
-            1.dp,
-            if (mediaState.isActive) accent.copy(alpha = 0.42f) else BorderHairline
-        ),
-        colors = CardDefaults.cardColors(containerColor = MidnightSurface)
+        shape = musicCardShape,
+        colors = CardDefaults.cardColors(containerColor = palette.surface)
     ) {
         if (mediaState.isActive) {
+            val activeBgModifier = if (palette.isCalmMode) {
+                Modifier.background(palette.surface)
+            } else {
+                Modifier.background(
+                    Brush.horizontalGradient(
+                        colors = listOf(
+                            accent.copy(alpha = 0.12f),
+                            palette.surface
+                        )
+                    )
+                )
+            }
             Column(
                 modifier = Modifier
                     .fillMaxWidth()
-                    .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(
-                                accent.copy(alpha = 0.12f),
-                                MidnightSurface
-                            )
-                        )
-                    )
+                    .then(activeBgModifier)
                     .padding(14.dp),
                 verticalArrangement = Arrangement.spacedBy(10.dp)
             ) {
@@ -752,13 +788,13 @@ fun HomeMusicCard(
                         .clickable(onClick = onOpenMusicApp)
                         .testTag("music_open_app_area"),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
                 ) {
                     Box(
                         modifier = Modifier
                             .size(54.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(ElevatedSurface),
+                            .background(palette.elevatedSurface),
                         contentAlignment = Alignment.Center
                     ) {
                         if (mediaState.artworkBitmap != null) {
@@ -791,7 +827,7 @@ fun HomeMusicCard(
                         ) {
                             Surface(
                                 shape = RoundedCornerShape(6.dp),
-                                color = if (mediaState.isPlaying) EmeraldOkContainer else HighSurface
+                                color = if (mediaState.isPlaying) palette.emeraldContainer else palette.highSurface
                             ) {
                                 Row(
                                     modifier = Modifier.padding(horizontal = 6.dp, vertical = 2.dp),
@@ -863,8 +899,17 @@ fun HomeMusicCard(
                         Icon(
                             imageVector = Icons.Outlined.Tune,
                             contentDescription = stringResource(R.string.music_service_choose_desc),
-                            tint = CyanPulse,
+                            tint = palette.accent,
                             modifier = Modifier.size(20.dp)
+                        )
+                    }
+
+                    if (onMinimize != null) {
+                        SectionCollapseIconButton(
+                            minimized = false,
+                            sectionName = sectionLabel,
+                            onToggle = onMinimize,
+                            testTag = "minimize_section_music"
                         )
                     }
                 }
@@ -891,7 +936,7 @@ fun HomeMusicCard(
 
                     Surface(
                         shape = CircleShape,
-                        color = CyanPulse,
+                        color = palette.accent,
                         modifier = Modifier
                             .size(48.dp)
                             .clip(CircleShape)
@@ -910,7 +955,7 @@ fun HomeMusicCard(
                                 } else {
                                     stringResource(R.string.music_action_play)
                                 },
-                                tint = ObsidianBackground,
+                                tint = palette.background,
                                 modifier = Modifier.size(26.dp)
                             )
                         }
@@ -940,7 +985,7 @@ fun HomeMusicCard(
                     .padding(horizontal = 14.dp, vertical = 12.dp)
                     .testTag("music_idle_row"),
                 verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(10.dp)
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
             ) {
                 if (preferredMusicApp != null) {
                     AppIconBadge(
@@ -953,13 +998,13 @@ fun HomeMusicCard(
                         modifier = Modifier
                             .size(44.dp)
                             .clip(RoundedCornerShape(12.dp))
-                            .background(HighSurface),
+                            .background(palette.highSurface),
                         contentAlignment = Alignment.Center
                     ) {
                         Icon(
                             imageVector = Icons.Filled.MusicNote,
                             contentDescription = null,
-                            tint = CyanPulse,
+                            tint = palette.accent,
                             modifier = Modifier.size(22.dp)
                         )
                     }
@@ -1008,7 +1053,7 @@ fun HomeMusicCard(
                     Icon(
                         imageVector = Icons.Outlined.Tune,
                         contentDescription = stringResource(R.string.music_service_choose_desc),
-                        tint = CyanPulse,
+                        tint = palette.accent,
                         modifier = Modifier.size(20.dp)
                     )
                 }
@@ -1023,13 +1068,13 @@ fun HomeMusicCard(
                         Icon(
                             imageVector = Icons.Outlined.NotificationsActive,
                             contentDescription = stringResource(R.string.banner_grant_access),
-                            tint = AmberSignal
+                            tint = palette.amber
                         )
                     }
                 } else {
                     OutlinedButton(
                         onClick = onOpenMusicApp,
-                        border = BorderStroke(1.dp, BorderHairline),
+                        border = BorderStroke(1.dp, palette.border),
                         modifier = Modifier
                             .minimumInteractiveComponentSize()
                             .testTag("music_open_app_button")
@@ -1040,6 +1085,15 @@ fun HomeMusicCard(
                             maxLines = 1
                         )
                     }
+                }
+
+                if (onMinimize != null) {
+                    SectionCollapseIconButton(
+                        minimized = false,
+                        sectionName = sectionLabel,
+                        onToggle = onMinimize,
+                        testTag = "minimize_section_music"
+                    )
                 }
             }
         }
