@@ -44,12 +44,16 @@ import com.example.launcher.MediaPlaybackState
 import com.example.launcher.WeatherLocationOption
 import com.example.launcher.WeatherService
 import com.example.launcher.WeatherUiState
+import com.example.notifications.ListenerRecoveryCoordinator
+import com.example.notifications.ListenerRecoveryPolicy
 import com.example.notifications.LocalPulseNotifier
 import com.example.notifications.NephoNotificationListener
+import com.example.notifications.RecoveryTrigger
 import com.example.updates.GitHubReleaseUpdater
 import com.example.updates.UpdateCheckState
 import com.example.widget.NephoWidgetUpdater
 import com.example.worker.DigestWorker
+import com.example.worker.ListenerHealthWatchdogWorker
 import com.example.worker.RetentionPurgeWorker
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -85,7 +89,8 @@ data class ListenerHealthState(
     val isListenerConnected: Boolean = false,
     val lastConnectedAt: Long? = null,
     val hasPostNotificationPermission: Boolean = true,
-    val isIgnoringBatteryOptimizations: Boolean = true
+    val isIgnoringBatteryOptimizations: Boolean = true,
+    val isReconnecting: Boolean = false
 )
 
 class PulseViewModel(application: Application) : AndroidViewModel(application) {
@@ -297,19 +302,33 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         checkIgnoringBatteryOptimizations(application)
     )
 
+    val autoRestartRequests: SharedFlow<Unit> =
+        ListenerRecoveryCoordinator.foregroundRestartRequests
+
     val listenerHealth: StateFlow<ListenerHealthState> = combine(
-        _isNotificationAccessGranted,
-        NephoNotificationListener.listenerConnectedFlow,
-        NephoNotificationListener.lastConnectedAtFlow,
-        _hasNotificationPermission,
-        _isIgnoringBatteryOptimizations
-    ) { accessGranted, connected, lastConnectedAt, notifPerm, ignoringBattery ->
+        combine(
+            _isNotificationAccessGranted,
+            NephoNotificationListener.listenerConnectedFlow,
+            NephoNotificationListener.lastConnectedAtFlow
+        ) { accessGranted, connected, lastConnectedAt ->
+            Triple(accessGranted, connected, lastConnectedAt)
+        },
+        combine(
+            _hasNotificationPermission,
+            _isIgnoringBatteryOptimizations,
+            ListenerRecoveryCoordinator.isReconnectingFlow
+        ) { notifPerm, ignoringBattery, reconnecting ->
+            Triple(notifPerm, ignoringBattery, reconnecting)
+        }
+    ) { (accessGranted, connected, lastConnectedAt), (notifPerm, ignoringBattery, reconnecting) ->
         ListenerHealthState(
             isAccessGranted = accessGranted,
             isListenerConnected = connected,
             lastConnectedAt = lastConnectedAt,
             hasPostNotificationPermission = notifPerm,
-            isIgnoringBatteryOptimizations = ignoringBattery
+            isIgnoringBatteryOptimizations = ignoringBattery,
+            isReconnecting = reconnecting &&
+                ListenerRecoveryPolicy.isYellowDisconnected(accessGranted, connected)
         )
     }.stateIn(
         viewModelScope,
@@ -319,7 +338,12 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
             isListenerConnected = NephoNotificationListener.listenerConnectedFlow.value,
             lastConnectedAt = NephoNotificationListener.lastConnectedAtFlow.value,
             hasPostNotificationPermission = _hasNotificationPermission.value,
-            isIgnoringBatteryOptimizations = _isIgnoringBatteryOptimizations.value
+            isIgnoringBatteryOptimizations = _isIgnoringBatteryOptimizations.value,
+            isReconnecting = ListenerRecoveryCoordinator.isReconnectingFlow.value &&
+                ListenerRecoveryPolicy.isYellowDisconnected(
+                    _isNotificationAccessGranted.value,
+                    NephoNotificationListener.listenerConnectedFlow.value
+                )
         )
     )
 
@@ -468,6 +492,10 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
                 _nextAlarmSummary.value = ClockAlarmHelper.readNextAlarmSummary(getApplication())
             }
         }
+        ListenerHealthWatchdogWorker.syncSchedule(
+            context = application,
+            isAccessGranted = _isNotificationAccessGranted.value
+        )
     }
 
     override fun onCleared() {
@@ -1008,6 +1036,18 @@ class PulseViewModel(application: Application) : AndroidViewModel(application) {
         _hasNotificationPermission.value = LocalPulseNotifier.hasNotificationPermission(ctx)
         _isNotificationAccessGranted.value = currentAccess
         _isIgnoringBatteryOptimizations.value = checkIgnoringBatteryOptimizations(ctx)
+        ListenerHealthWatchdogWorker.syncSchedule(ctx, currentAccess)
+        if (ListenerRecoveryPolicy.isYellowDisconnected(
+                isAccessGranted = currentAccess,
+                isListenerConnected = NephoNotificationListener.listenerConnectedFlow.value
+            )
+        ) {
+            ListenerRecoveryCoordinator.onYellowStatusDetected(
+                context = ctx,
+                trigger = RecoveryTrigger.APP_RESUME,
+                allowForegroundRestart = true
+            )
+        }
         if (previousAccess != currentAccess) {
             NephoWidgetUpdater.requestUpdate(ctx)
         }

@@ -18,13 +18,18 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
+import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.lifecycleScope
+import androidx.lifecycle.repeatOnLifecycle
 import com.example.ai.configureAppCheck
 import com.example.data.SupportedApp
+import com.example.notifications.ListenerRecoveryCoordinator
 import com.example.ui.NephoApp
 import com.example.ui.PulseViewModel
 import com.example.ui.theme.NephoTheme
 import com.example.widget.NephoUnreadWidgetProvider
+import kotlinx.coroutines.launch
 
 class MainActivity : ComponentActivity() {
 
@@ -39,6 +44,14 @@ class MainActivity : ComponentActivity() {
         enableEdgeToEdge()
         handleIncomingShareIntent(intent)
         handleWidgetIntent(intent)
+
+        lifecycleScope.launch {
+            repeatOnLifecycle(Lifecycle.State.RESUMED) {
+                viewModel.autoRestartRequests.collect {
+                    restartNephoCleanly(showToast = false)
+                }
+            }
+        }
 
         setContent {
             val calmVisualPrefs by viewModel.calmVisualPrefs.collectAsStateWithLifecycle()
@@ -134,7 +147,7 @@ class MainActivity : ComponentActivity() {
                     },
                     onEnableScreenLockAdmin = launchScreenLockAdminPrompt,
                     onHideKeyboard = ::hideSoftKeyboard,
-                    onRestartNepho = ::restartNephoCleanly
+                    onRestartNepho = { restartNephoCleanly(showToast = true) }
                 )
             }
         }
@@ -142,8 +155,14 @@ class MainActivity : ComponentActivity() {
 
     override fun onResume() {
         super.onResume()
+        ListenerRecoveryCoordinator.setForeground(true)
         viewModel.refreshAccessAndPermissions()
         viewModel.refreshLauncherState()
+    }
+
+    override fun onPause() {
+        ListenerRecoveryCoordinator.setForeground(false)
+        super.onPause()
     }
 
     override fun onUserLeaveHint() {
@@ -159,14 +178,16 @@ class MainActivity : ComponentActivity() {
         handleWidgetIntent(intent)
     }
 
-    private fun restartNephoCleanly() {
+    private fun restartNephoCleanly(showToast: Boolean = true) {
         hideSoftKeyboard()
         viewModel.resetAndRestartListener()
-        Toast.makeText(
-            this,
-            R.string.restart_nepho_in_progress,
-            Toast.LENGTH_SHORT
-        ).show()
+        if (showToast) {
+            Toast.makeText(
+                this,
+                R.string.restart_nepho_in_progress,
+                Toast.LENGTH_SHORT
+            ).show()
+        }
         val relaunched = runCatching {
             val restartIntent = Intent(this, MainActivity::class.java).apply {
                 addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK)

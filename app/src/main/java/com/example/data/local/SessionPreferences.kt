@@ -148,6 +148,7 @@ class SessionPreferences(private val context: Context) {
         val CALM_PALETTE_ENABLED = booleanPreferencesKey("calm_palette_enabled")
         val CALM_MONOCHROME_ICONS = booleanPreferencesKey("calm_monochrome_icons")
         val CALM_HIDE_UNREAD_COUNTS = booleanPreferencesKey("calm_hide_unread_counts")
+        val LAST_AUTO_RESTART_AT = longPreferencesKey("listener_last_auto_restart_at")
     }
 
     val sessionOpenedAtFlow: Flow<Long> = context.pulseSessionDataStore.data.map { prefs ->
@@ -281,6 +282,16 @@ class SessionPreferences(private val context: Context) {
             prefs[Keys.SESSION_OPENED_AT] = now
         }
         return now
+    }
+
+    suspend fun getLastAutoRestartAtMillis(): Long {
+        return context.pulseSessionDataStore.data.first()[Keys.LAST_AUTO_RESTART_AT] ?: 0L
+    }
+
+    suspend fun setLastAutoRestartAtMillis(timestampMillis: Long) {
+        context.pulseSessionDataStore.edit { prefs ->
+            prefs[Keys.LAST_AUTO_RESTART_AT] = timestampMillis
+        }
     }
 
     suspend fun setBannerDismissed(dismissed: Boolean) {

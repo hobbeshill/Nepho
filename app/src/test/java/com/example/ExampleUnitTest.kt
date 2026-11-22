@@ -7,6 +7,7 @@ import com.example.data.local.HomeSectionId
 import com.example.data.local.HomeSectionPrefs
 import com.example.launcher.LauncherAppCatalog
 import com.example.launcher.LauncherAppInfo
+import com.example.notifications.ListenerRecoveryPolicy
 import com.example.ui.SoothingQuotesCatalog
 import com.example.ui.areAllVisibleSectionsMinimized
 import com.example.ui.computeLetterOffsetInDrawer
@@ -127,6 +128,90 @@ class ExampleUnitTest {
     assertEquals(3, computeLetterOffsetInDrawer(grouped, "C"))
     assertEquals(5, computeLetterOffsetInDrawer(grouped, "S"))
     assertEquals(-1, computeLetterOffsetInDrawer(grouped, "Z"))
+  }
+
+  @Test
+  fun listenerRecoveryPolicyEnforcesYellowDetectionAndCooldownGuardrails() {
+    assertTrue(ListenerRecoveryPolicy.isYellowDisconnected(isAccessGranted = true, isListenerConnected = false))
+    assertFalse(ListenerRecoveryPolicy.isYellowDisconnected(isAccessGranted = false, isListenerConnected = false))
+    assertFalse(ListenerRecoveryPolicy.isYellowDisconnected(isAccessGranted = true, isListenerConnected = true))
+
+    val baseTime = 1_000_000L
+    // First silent attempt allowed when yellow
+    assertTrue(
+      ListenerRecoveryPolicy.canRunSilentRecovery(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        nowMs = baseTime,
+        lastSilentAttemptMs = 0L
+      )
+    )
+    // Blocked within 30s silent cooldown
+    assertFalse(
+      ListenerRecoveryPolicy.canRunSilentRecovery(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        nowMs = baseTime + 15_000L,
+        lastSilentAttemptMs = baseTime
+      )
+    )
+    // Allowed after 30s silent cooldown
+    assertTrue(
+      ListenerRecoveryPolicy.canRunSilentRecovery(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        nowMs = baseTime + ListenerRecoveryPolicy.SILENT_RECOVERY_COOLDOWN_MS,
+        lastSilentAttemptMs = baseTime
+      )
+    )
+
+    // Stage 3 auto-restart is foreground-only and throttled by 10-minute cooldown
+    assertFalse(
+      ListenerRecoveryPolicy.canTriggerAutoRestart(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        isForeground = false,
+        nowMs = baseTime,
+        lastAutoRestartMs = 0L
+      )
+    )
+    assertTrue(
+      ListenerRecoveryPolicy.canTriggerAutoRestart(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        isForeground = true,
+        nowMs = baseTime,
+        lastAutoRestartMs = 0L
+      )
+    )
+    assertFalse(
+      ListenerRecoveryPolicy.canTriggerAutoRestart(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        isForeground = true,
+        nowMs = baseTime + 5L * 60L * 1_000L,
+        lastAutoRestartMs = baseTime
+      )
+    )
+    assertTrue(
+      ListenerRecoveryPolicy.canTriggerAutoRestart(
+        isAccessGranted = true,
+        isListenerConnected = false,
+        isForeground = true,
+        nowMs = baseTime + ListenerRecoveryPolicy.AUTO_RESTART_COOLDOWN_MS,
+        lastAutoRestartMs = baseTime
+      )
+    )
+    // Once connected again, auto-restart must never fire
+    assertFalse(
+      ListenerRecoveryPolicy.canTriggerAutoRestart(
+        isAccessGranted = true,
+        isListenerConnected = true,
+        isForeground = true,
+        nowMs = baseTime + ListenerRecoveryPolicy.AUTO_RESTART_COOLDOWN_MS,
+        lastAutoRestartMs = 0L
+      )
+    )
   }
 }
 

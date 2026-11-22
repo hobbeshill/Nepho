@@ -50,6 +50,7 @@ class NephoNotificationListener : NotificationListenerService() {
         val connectedAt = System.currentTimeMillis()
         _listenerConnected.value = true
         _lastConnectedAt.value = connectedAt
+        ListenerRecoveryCoordinator.onListenerConnected(applicationContext)
 
         val repository = PulseRepository.getInstance(applicationContext)
         val currentActive = runCatching { activeNotifications?.toList().orEmpty() }
@@ -74,6 +75,10 @@ class NephoNotificationListener : NotificationListenerService() {
             activeInstance = null
         }
         _listenerConnected.value = false
+        ListenerRecoveryCoordinator.onYellowStatusDetected(
+            context = applicationContext,
+            trigger = RecoveryTrigger.DISCONNECT
+        )
         val repository = PulseRepository.getInstance(applicationContext)
         serviceScope.launch {
             repository.recordCaptureDiagnostic(
@@ -81,7 +86,7 @@ class NephoNotificationListener : NotificationListenerService() {
                 appLabel = "Nepho",
                 titlePreview = "Listener disconnected",
                 outcome = CaptureOutcome.LISTENER_DISCONNECTED,
-                detail = "Android unbound the notification listener. Nepho will catch up post-session alerts on reconnect."
+                detail = "Android unbound the notification listener. Automatic recovery is running and will catch up post-session alerts on reconnect."
             )
         }
     }

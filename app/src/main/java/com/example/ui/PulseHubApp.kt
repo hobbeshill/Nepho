@@ -1,6 +1,12 @@
 package com.example.ui
 
 import androidx.activity.compose.BackHandler
+import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.RepeatMode
+import androidx.compose.animation.core.animateFloat
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Image
 import androidx.compose.foundation.background
@@ -80,6 +86,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.scale
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalContext
@@ -88,6 +95,8 @@ import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
@@ -1177,6 +1186,32 @@ fun NephoHeaderTitle(
         listenerHealth.isListenerConnected -> palette.emerald
         else -> palette.amber
     }
+    val isYellowReconnecting = listenerHealth.isAccessGranted &&
+        !listenerHealth.isListenerConnected &&
+        listenerHealth.isReconnecting
+    val healthDotDescription = stringResource(
+        when {
+            !listenerHealth.isAccessGranted -> R.string.health_dot_access_off_desc
+            listenerHealth.isListenerConnected -> R.string.health_dot_connected_desc
+            isYellowReconnecting -> R.string.health_dot_reconnecting_desc
+            else -> R.string.health_dot_disconnected_desc
+        }
+    )
+    val reconnectingPulse = if (isYellowReconnecting) {
+        val transition = rememberInfiniteTransition(label = "health_dot_reconnect_pulse")
+        val pulse by transition.animateFloat(
+            initialValue = 0f,
+            targetValue = 1f,
+            animationSpec = infiniteRepeatable(
+                animation = tween(durationMillis = 1_400, easing = FastOutSlowInEasing),
+                repeatMode = RepeatMode.Reverse
+            ),
+            label = "health_dot_pulse_value"
+        )
+        pulse
+    } else {
+        1f
+    }
     Column(
         verticalArrangement = Arrangement.spacedBy(1.dp),
         modifier = modifier
@@ -1235,8 +1270,11 @@ fun NephoHeaderTitle(
             Box(
                 modifier = Modifier
                     .size(8.dp)
+                    .scale(if (isYellowReconnecting) 0.86f + (0.30f * reconnectingPulse) else 1f)
+                    .alpha(if (isYellowReconnecting) 0.40f + (0.60f * reconnectingPulse) else 1f)
                     .clip(CircleShape)
                     .background(healthDotColor)
+                    .semantics { contentDescription = healthDotDescription }
                     .testTag("top_bar_health_dot")
             )
         }

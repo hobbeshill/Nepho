@@ -93,6 +93,7 @@
     <string name="diagnostics_listener_connected">Connected</string>
     <string name="diagnostics_listener_connected_since">Connected • %1$s</string>
     <string name="diagnostics_listener_disconnected">Disconnected</string>
+    <string name="diagnostics_listener_reconnecting">Reconnecting…</string>
     <string name="diagnostics_listener_no_access">Access Off</string>
     <string name="diagnostics_shade_perm_label">Nepho Shade Alerts</string>
     <string name="diagnostics_perm_granted">Granted</string>
@@ -357,6 +358,10 @@
     <string name="quotes_card_header">Quiet Reflection</string>
     <string name="quotes_card_next_desc">Show another soothing quote</string>
     <string name="quotes_card_tap_hint">Tap for another reflection</string>
+    <string name="health_dot_connected_desc">Notification listener connected</string>
+    <string name="health_dot_reconnecting_desc">Reconnecting notification listener</string>
+    <string name="health_dot_disconnected_desc">Notification listener disconnected</string>
+    <string name="health_dot_access_off_desc">Notification access is off</string>
 </resources>
 
 

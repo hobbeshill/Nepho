@@ -311,6 +311,7 @@ private fun ListenerHealthCard(
                     shortTimeFormatter.format(Date(health.lastConnectedAt))
                 )
                 health.isListenerConnected -> stringResource(R.string.diagnostics_listener_connected)
+                health.isReconnecting -> stringResource(R.string.diagnostics_listener_reconnecting)
                 else -> stringResource(R.string.diagnostics_listener_disconnected)
             }
 
@@ -481,7 +482,8 @@ private fun HealthStatusRow(
                     style = MaterialTheme.typography.bodySmall,
                     color = statusColor,
                     maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
+                    overflow = TextOverflow.Ellipsis,
+                    modifier = Modifier.testTag("health_status_text_${label.lowercase(Locale.ROOT).replace(' ', '_')}")
                 )
             }
         }
@@ -580,6 +582,8 @@ private fun outcomeBadgeStyle(outcomeName: String): Triple<String, Color, Color>
     CaptureOutcome.CAPTURED_CATCHUP.name -> Triple("CATCH-UP", CyanPulse, CyanPulseContainer)
     CaptureOutcome.LISTENER_CONNECTED.name -> Triple("CONNECTED", CyanPulse, CyanPulseContainer)
     CaptureOutcome.LISTENER_DISCONNECTED.name -> Triple("DISCONNECTED", CrimsonError, CrimsonErrorContainer)
+    CaptureOutcome.LISTENER_RECONNECTING.name -> Triple("RECONNECTING", AmberSignal, AmberSignalContainer)
+    CaptureOutcome.LISTENER_AUTO_RESTARTED.name -> Triple("AUTO-RESTART", CyanPulse, CyanPulseContainer)
     CaptureOutcome.SKIPPED_BLOCKED.name -> Triple("BLOCKED", CrimsonError, CrimsonErrorContainer)
     CaptureOutcome.SKIPPED_OPTED_OUT.name -> Triple("OPTED OUT", AmberSignal, AmberSignalContainer)
     CaptureOutcome.SKIPPED_GROUP_SUMMARY.name -> Triple("SUMMARY SKIPPED", AmberSignal, AmberSignalContainer)

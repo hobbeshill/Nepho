@@ -2,6 +2,7 @@ package com.example
 
 import android.net.Uri
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.ui.test.assertContentDescriptionEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsEnabled
 import androidx.compose.ui.test.assertTextContains
@@ -12,9 +13,11 @@ import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.test.performTextInput
 import com.example.data.CachedGifAttachment
+import com.example.data.CaptureOutcome
 import com.example.data.PulseNotificationItem
 import com.example.data.SupportedApp
 import com.example.data.local.CalmVisualPrefs
+import com.example.data.local.CaptureDiagnosticEntity
 import com.example.data.local.HomeSectionId
 import com.example.data.local.HomeSectionPrefs
 import com.example.launcher.CalendarDayGroup
@@ -1400,6 +1403,68 @@ class ChromeOsUiTest {
             assertEquals("com.spotify.music", launchedApp?.packageName)
             assertFalse(drawerOpen.value)
         }
+    }
+
+    @Test
+    fun `NephoHeaderTitle and CaptureDiagnosticsDialog display subtle reconnecting status and recovery log entries`() {
+        val reconnectingHealth = ListenerHealthState(
+            isAccessGranted = true,
+            isListenerConnected = false,
+            lastConnectedAt = null,
+            hasPostNotificationPermission = true,
+            isIgnoringBatteryOptimizations = true,
+            isReconnecting = true
+        )
+        val entries = listOf(
+            CaptureDiagnosticEntity(
+                id = 1L,
+                timestamp = 1_700_000_000_000L,
+                packageName = "com.aistudio.pulsehub.kxmvpq",
+                appLabel = "Nepho",
+                titlePreview = "Auto-reconnecting listener",
+                outcome = CaptureOutcome.LISTENER_RECONNECTING.name,
+                detail = "Auto-recovery (app resume): requested Android to rebind."
+            ),
+            CaptureDiagnosticEntity(
+                id = 2L,
+                timestamp = 1_700_000_010_000L,
+                packageName = "com.aistudio.pulsehub.kxmvpq",
+                appLabel = "Nepho",
+                titlePreview = "Auto-restarting Nepho",
+                outcome = CaptureOutcome.LISTENER_AUTO_RESTARTED.name,
+                detail = "Auto-recovery (app resume): cleanly restarting Nepho."
+            )
+        )
+
+        composeRule.setContent {
+            NephoTheme {
+                androidx.compose.foundation.layout.Column {
+                    NephoHeaderTitle(
+                        versionName = "1.0",
+                        listenerHealth = reconnectingHealth,
+                        onClick = {}
+                    )
+                    CaptureDiagnosticsDialog(
+                        health = reconnectingHealth,
+                        diagnostics = entries,
+                        onRequestRebind = {},
+                        onOpenNotificationAccessSettings = {},
+                        onRequestNotificationPermission = {},
+                        onOpenBatterySettings = {},
+                        onClearLog = {},
+                        onDismiss = {},
+                        onRestartNepho = {}
+                    )
+                }
+            }
+        }
+
+        composeRule.onNodeWithTag("top_bar_health_dot", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertContentDescriptionEquals("Reconnecting notification listener")
+        composeRule.onNodeWithTag("health_status_text_notification_listener", useUnmergedTree = true)
+            .assertIsDisplayed()
+            .assertTextContains("Reconnecting…")
     }
 }
 
